@@ -697,6 +697,23 @@ public class LauncherActivity extends Activity {
                     new String[] {"Default", "Very low (20%)", "Low (30%)", "Medium (40%)",
                             "High (70%)", "Console (100%)"},
                     new String[] {"0.2", "0.3", "0.4", "0.7", "1.0"}),
+            // G925 GRAPHICS LAB v1 - optional image-quality controls
+            new GraphicsSetting("Reflection resolution", "Higher can be slower on Mali GPUs",
+                    new String[] {"gta4_reflection_resolution"},
+                    new String[] {"Default", "Original", "1080p", "Full"},
+                    new String[] {"original", "1080p", "full"}),
+            new GraphicsSetting("Reflection distance", "How far reflection captures render the world",
+                    new String[] {"gta4_reflection_capture_distance"},
+                    new String[] {"Default", "Near", "Original", "Extended", "Far"},
+                    new String[] {"near", "original", "extended", "far"}),
+            new GraphicsSetting("Dynamic draw distance", "Automatically reduces draw distance under load",
+                    new String[] {"gta4_dynamic_draw_distance"},
+                    new String[] {"Default", "On", "Off"},
+                    new String[] {"true", "false"}),
+            new GraphicsSetting("Reflection FPS guard", "Refreshes reflections less often below 30 FPS",
+                    new String[] {"gta4_fps_guard"},
+                    new String[] {"Default", "Off", "Normal", "Strong"},
+                    new String[] {"0", "1", "2"}),
             new GraphicsSetting("Shadow quality", "High is sharper and costs some GPU time",
                     new String[] {"gta4_shadow_map_base_size"},
                     new String[] {"Default", "Console", "High"},
@@ -840,6 +857,65 @@ public class LauncherActivity extends Activity {
         for (LinearLayout page : pages) card.addView(page, matchWrap(dp(4)));
         selectGraphicsTab(tabs, pages, 0);
 
+        // G925 GRAPHICS LAB v1 - changes only graphics selectors, not Android drivers.
+        card.addView(heading("IMMORTALIS G925 GRAPHICS LAB", 17), matchWrap(dp(8)));
+        card.addView(text("Optional graphics presets. Sharp is balanced, Visual+ uses FSR "
+                + "Ultra Quality with sharper shadows; Ultra is a short benchmark only. "
+                + "Higher graphics settings may LOWER FPS. Press Save changes, then Play.",
+                12, R.color.picker_muted), matchWrap(dp(8)));
+        Button g925Preset0 = button("G925 SHARP / BALANCED", false);
+        g925Preset0.setOnClickListener(v -> applyG925Preset(new String[][] {
+                {"gta4_output_height_cap", "900"},
+                {"gta4_native_upscaler", "native"},
+                {"gta4_native_anti_aliasing", "smaa"},
+                {"gta4_frame_limit", "40"},
+                {"gta4_draw_distance_scale", "1.0"},
+                {"gta4_traffic_density_scale", "0.4"},
+                {"gta4_shadow_map_base_size", "256"},
+                {"gta4_reflection_resolution", "original"},
+                {"gta4_reflection_capture_distance", "near"},
+                {"gta4_dynamic_draw_distance", "true"},
+                {"gta4_fps_guard", "2"},
+                {"gta4_motion_blur", "false"}
+        }, "G925 Sharp / Balanced"));
+        card.addView(g925Preset0, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        Button g925Preset1 = button("G925 VISUAL+", false);
+        g925Preset1.setOnClickListener(v -> applyG925Preset(new String[][] {
+                {"gta4_output_height_cap", "1080"},
+                {"gta4_native_upscaler", "fsr1"},
+                {"gta4_fsr1_quality", "ultra_quality"},
+                {"gta4_native_anti_aliasing", "smaa"},
+                {"gta4_frame_limit", "40"},
+                {"gta4_draw_distance_scale", "1.0"},
+                {"gta4_traffic_density_scale", "0.4"},
+                {"gta4_shadow_map_base_size", "512"},
+                {"gta4_reflection_resolution", "original"},
+                {"gta4_reflection_capture_distance", "near"},
+                {"gta4_dynamic_draw_distance", "true"},
+                {"gta4_fps_guard", "2"},
+                {"gta4_motion_blur", "false"}
+        }, "G925 Visual+"));
+        card.addView(g925Preset1, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        Button g925Preset2 = button("G925 ULTRA - BENCHMARK ONLY", false);
+        g925Preset2.setOnClickListener(v -> applyG925Preset(new String[][] {
+                {"gta4_output_height_cap", "1080"},
+                {"gta4_native_upscaler", "native"},
+                {"gta4_native_anti_aliasing", "smaa"},
+                {"gta4_frame_limit", "60"},
+                {"gta4_draw_distance_scale", "1.2"},
+                {"gta4_traffic_density_scale", "0.7"},
+                {"gta4_shadow_map_base_size", "512"},
+                {"gta4_reflection_resolution", "1080p"},
+                {"gta4_reflection_capture_distance", "original"},
+                {"gta4_dynamic_draw_distance", "false"},
+                {"gta4_fps_guard", "0"},
+                {"gta4_motion_blur", "false"}
+        }, "G925 Ultra benchmark"));
+        card.addView(g925Preset2, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+
         Button reset = button("RESET TO DEFAULT", false);
         reset.setOnClickListener(v -> {
             for (int i = 0; i < mGraphicsSpinners.length; ++i) {
@@ -854,6 +930,33 @@ public class LauncherActivity extends Activity {
         resetParams.topMargin = dp(14);
         card.addView(reset, resetParams);
         return card;
+    }
+
+    /** Apply documented launcher options; do not modify GPU drivers or user saves. */
+    private void applyG925Preset(String[][] overrides, String profileName) {
+        int applied = 0;
+        for (String[] entry : overrides) {
+            String key = entry[0], value = entry[1];
+            for (int i = 0; i < GRAPHICS_SETTINGS.length; i++) {
+                GraphicsSetting setting = GRAPHICS_SETTINGS[i];
+                if (!setting.cvars[0].equals(key)) continue;
+                for (int choice = 0; choice < setting.values.length; choice++) {
+                    if (!setting.values[choice].equals(value)) continue;
+                    mGraphicsSpinners[i].setSelection(choice + 1, false);
+                    mGraphicsPositions[i] = choice + 1;
+                    applied++;
+                    break;
+                }
+            }
+        }
+        if (applied != overrides.length) {
+            Log.w(TAG, "G925 preset " + profileName + " applied only "
+                    + applied + "/" + overrides.length + " settings");
+            toast("G925 preset incomplete - check current app version");
+            return;
+        }
+        markSettingsChanged();
+        toast(profileName + " - press Save changes, then Play");
     }
 
     private void selectGraphicsTab(TextView[] tabs, LinearLayout[] pages, int index) {
