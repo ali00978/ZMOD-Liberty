@@ -4,13 +4,13 @@ name: Android APK
 # in os/android/scripts were written and tested on (Git Bash + the NDK).
 # Download the result from the run's "Artifacts" section.
 #
-# Starts by itself on a push to the mali-dimensity-8400 branch (except pushes that
+# Starts on pushes to the Mali base or the G925 Graphics Lab branch (except pushes that
 # only change documentation), or by hand from the Actions tab. The native build is very large: the first run takes hours,
 # and later runs are faster because the build folder is cached.
 
 on:
   push:
-    branches: [mali-dimensity-8400]
+    branches: [mali-dimensity-8400, feature/g925-graphics-lab]
     # Changes that cannot affect the APK do not start a build: documentation,
     # images for the README, and the other workflows.
     paths-ignore:
@@ -31,7 +31,7 @@ on:
         description: 'CPU target: compatible = all phones; armv9 = Dimensity 8400 and newer only (faster, crashes on older phones)'
         type: choice
         options: [compatible, armv9]
-        default: compatible
+        default: armv9
 
 permissions:
   contents: read
@@ -42,7 +42,7 @@ concurrency:
 
 jobs:
   apk:
-    name: APK (${{ inputs.gpu || 'mali' }}, ${{ inputs.cpu || 'compatible' }})
+    name: APK (${{ inputs.gpu || 'mali' }}, ${{ inputs.cpu || 'armv9' }})
     runs-on: windows-2022
     timeout-minutes: 360
     defaults:
@@ -50,7 +50,7 @@ jobs:
         shell: bash
     env:
       LIBERTY_GPU: ${{ inputs.gpu || 'mali' }}
-      LIBERTY_CPU: ${{ inputs.cpu || 'compatible' }}
+      LIBERTY_CPU: ${{ inputs.cpu || 'armv9' }}
       NDK_VER: 29.0.14206865
       STRIP: '1'
 
@@ -68,6 +68,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - name: Validate the G925 Graphics Lab presets
+        run: python tools/test_g925_graphics_lab.py
 
       - name: Install CMake and Ninja
         run: python -m pip install 'cmake>=3.29,<5' ninja
