@@ -25,3 +25,12 @@ Use System Vulkan, the same GTA IV save/scene and original graphics. FPS cap
 (1) CPU response pacing Original (100ms); (2) Default (25ms).
 Enable Frametime overlay to inspect title P95 and max gaps; note temperature.
 Do not claim improvement until A/B on the actual POCO is complete.
+
+## Additional native hot-path improvements
+
+- Replace every-frame vector reallocation with a fixed 256-entry ADPF duration
+  buffer. Only valid samples are copied to the reporting thread; when the hint
+  API is disabled, no frame samples are collected.
+- Sample CLOCK_MONOTONIC once per new title submission and only once every 64
+  waiting polls. The original hook clocked every blocked poll. The independent
+  frame-gap histogram still observes each submitted title frame.

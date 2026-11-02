@@ -53,18 +53,24 @@ extern "C" void sub_82A46D70(PPCContext& ctx, uint8_t* base) {
     static uint32_t submitted_count = 0;
     static timespec window_start{};
     static gta4::android::G925FrameHealthWindow health;
-    timespec now{};
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    const uint64_t now_ns = uint64_t(now.tv_sec) * 1'000'000'000ULL +
-                            uint64_t(now.tv_nsec);
+    // This hook also runs during frequent title wait-loop polling. Time is
+    // sampled for each real game-frame submission plus every 64th poll,
+    // rather than forcing a clock syscall on every blocked iteration.
+    static uint32_t poll_counter = 0;
     health.ObservePoll(pending);
     const uint32_t submitted = REX_LOAD_U32(out + 4);
-    if (submitted != last_submitted) {
+    const bool new_frame = submitted != last_submitted;
+    if (new_frame) {
       last_submitted = submitted;
       ++submitted_count;
-      health.ObserveTitleFrame(now_ns);
       gta4::android::NoteTitleFrame();
     }
+    if (new_frame || ((++poll_counter & 63u) == 0u)) {
+      timespec now{};
+      clock_gettime(CLOCK_MONOTONIC, &now);
+      const uint64_t now_ns = uint64_t(now.tv_sec) * 1'000'000'000ULL +
+                              uint64_t(now.tv_nsec);
+      if (new_frame) health.ObserveTitleFrame(now_ns);
     if (window_start.tv_sec == 0) window_start = now;
     const double elapsed = double(now.tv_sec - window_start.tv_sec) +
                            double(now.tv_nsec - window_start.tv_nsec) / 1e9;
@@ -92,6 +98,7 @@ extern "C" void sub_82A46D70(PPCContext& ctx, uint8_t* base) {
       submitted_count = 0;
       window_start = now;
     }
+    }  // frame submission or sampled waiting poll
   }
   const uint32_t extra = REXCVAR_GET(gta4_extra_frames_in_flight);
   if (extra) {

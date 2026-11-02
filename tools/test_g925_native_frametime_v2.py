@@ -17,12 +17,18 @@ assert 'scan_now - last_thread_scan >= std::chrono::seconds(1)' in hint
 assert 'busy.Sample(self);  // Establish initial CPU tick baseline.' in hint
 assert 'utime + stime >= last->second' in hint
 assert 'api.update_target(session, target) == 0' in hint
-assert 'g_frame_durations.clear();' in hint
+assert 'std::array<int64_t, 256> g_frame_durations{};' in hint
+assert 'std::copy_n(g_frame_durations.begin(), duration_count, durations.begin());' in hint
+assert 'g_frame_durations.push_back' not in hint
+assert 'durations.swap(g_frame_durations)' not in hint
+assert 'if (!REXCVAR_GET(android_performance_hint)) return;' in hint
 assert '#include <cstddef>' in health
 assert 'class G925FrameHealthWindow' in health
 assert 'static_assert([] {' in health
 assert 'std::array<uint32_t, 11> histogram_' in health
 assert 'health.ObservePoll(pending)' in hook
+assert '((++poll_counter & 63u) == 0u)' in hook
+assert 'if (new_frame) health.ObserveTitleFrame(now_ns)' in hook
 assert 'elapsed >= 5.0' in hook
 assert 'metrics.over_50ms' in hook
 assert 'g_liberty_title_p95_ms.store' in hook

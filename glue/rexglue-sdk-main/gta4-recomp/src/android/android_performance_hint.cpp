@@ -1,6 +1,7 @@
 #include "android/android_performance_hint.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -52,8 +53,11 @@ constexpr size_t kMaxHintThreads = 6;
 // CPU ticks (100 per second) a thread needs in one second to count as busy.
 constexpr uint64_t kBusyTicks = 10;
 
+// Fixed-size frame recorder: unlike the original vector swap, the hot game
+// thread never allocates memory to report a completed frame.
 std::mutex g_frames_mutex;
-std::vector<int64_t> g_frame_durations;  // filled by NoteTitleFrame
+std::array<int64_t, 256> g_frame_durations{};
+size_t g_frame_count = 0;
 int64_t g_last_frame_ns = 0;
 
 int64_t NowNs() {
@@ -170,12 +174,18 @@ void Log(const char* message, size_t count) {
 }  // namespace
 
 void NoteTitleFrame() noexcept {
+  if (!REXCVAR_GET(android_performance_hint)) return;
   const int64_t now = NowNs();
   std::lock_guard lock(g_frames_mutex);
-  if (g_last_frame_ns != 0) {
+  if (g_last_frame_ns != 0 && now > g_last_frame_ns) {
     // Clamp pauses and loading stalls so one long gap does not dominate.
-    g_frame_durations.push_back(std::min<int64_t>(now - g_last_frame_ns, kMaxFrameNs));
-    if (g_frame_durations.size() > 256) g_frame_durations.erase(g_frame_durations.begin());
+    const int64_t duration = std::min<int64_t>(now - g_last_frame_ns, kMaxFrameNs);
+    if (g_frame_count < g_frame_durations.size()) {
+      g_frame_durations[g_frame_count++] = duration;
+    } else {
+      // Reporter may fall behind during load; retain newest bounded sample.
+      g_frame_durations.back() = duration;
+    }
   }
   g_last_frame_ns = now;
 }
@@ -215,7 +225,7 @@ void StartPerformanceHint() {
         // is disabled. No frame durations should accumulate in that mode.
         {
           std::lock_guard lock(g_frames_mutex);
-          g_frame_durations.clear();
+          g_frame_count = 0;
           g_last_frame_ns = 0;
         }
         continue;
@@ -272,15 +282,18 @@ void StartPerformanceHint() {
           session_target = target;
         }
       }
-      // Report the frames finished since the last pass.
-      std::vector<int64_t> durations;
+      // No heap allocation in the reporting path; only copy valid samples.
+      std::array<int64_t, 256> durations;
+      size_t duration_count = 0;
       {
         std::lock_guard lock(g_frames_mutex);
-        durations.swap(g_frame_durations);
+        duration_count = g_frame_count;
+        std::copy_n(g_frame_durations.begin(), duration_count, durations.begin());
+        g_frame_count = 0;
       }
       if (session) {
-        for (int64_t duration : durations) {
-          if (duration > 0) api.report(session, duration);
+        for (size_t i = 0; i < duration_count; ++i) {
+          if (durations[i] > 0) api.report(session, durations[i]);
         }
       }
     }
