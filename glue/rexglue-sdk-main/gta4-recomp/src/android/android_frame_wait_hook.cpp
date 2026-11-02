@@ -15,7 +15,9 @@
 #include <android/log.h>
 
 #include "android/android_performance_hint.h"
+#include "android/g925_frame_queue_policy.h"
 
+#include <algorithm>
 #include <atomic>
 
 #include <rex/cvar.h>
@@ -33,7 +35,7 @@ REXCVAR_DEFINE_BOOL(gta4_frame_wait_sleep, true, "GTA IV/Performance",
 REXCVAR_DEFINE_UINT32(gta4_extra_frames_in_flight, 0, "GTA IV/Performance",
                       "Frames the title may run ahead beyond its own limit of two pending "
                       "frames (more throughput, one frame of input latency each)")
-    .range(0, 2);
+    .range(0, gta4::android::kG925MaxRunAhead);
 
 // Latest game update rate, shown by the in-game "Show FPS" overlay.
 std::atomic<float> g_liberty_title_fps{0.0f};
@@ -48,15 +50,27 @@ extern "C" void sub_82A46D70(PPCContext& ctx, uint8_t* base) {
   {
     static uint32_t last_submitted = 0;
     static uint32_t submitted_count = 0;
+    static uint32_t max_pending_window = 0;
+    static uint32_t title_slow_gaps = 0;
+    static uint64_t largest_title_gap_ns = 0;
+    static uint64_t previous_title_ns = 0;
     static timespec window_start{};
     const uint32_t submitted = REX_LOAD_U32(out + 4);
+    timespec now{};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    const uint64_t now_ns = uint64_t(now.tv_sec) * 1'000'000'000ULL + uint64_t(now.tv_nsec);
+    max_pending_window = std::max(max_pending_window, pending);
     if (submitted != last_submitted) {
       last_submitted = submitted;
       ++submitted_count;
       gta4::android::NoteTitleFrame();
+      if (previous_title_ns && now_ns > previous_title_ns) {
+        const uint64_t gap_ns = now_ns - previous_title_ns;
+        largest_title_gap_ns = std::max(largest_title_gap_ns, gap_ns);
+        if (gap_ns > 50'000'000ULL) ++title_slow_gaps;
+      }
+      previous_title_ns = now_ns;
     }
-    timespec now{};
-    clock_gettime(CLOCK_MONOTONIC, &now);
     if (window_start.tv_sec == 0) window_start = now;
     const double elapsed = double(now.tv_sec - window_start.tv_sec) +
                            double(now.tv_nsec - window_start.tv_nsec) / 1e9;
@@ -65,15 +79,21 @@ extern "C" void sub_82A46D70(PPCContext& ctx, uint8_t* base) {
     }
     if (elapsed >= 2.0) {
       __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp",
-                          "title-fps: %.1f (game frames submitted per second)",
-                          submitted_count / elapsed);
+                          "title-fps: %.1f title-max-gap-ms: %.1f title-gaps-over-50ms: %u"
+                          " render-pending-max: %u run-ahead: %u (game submissions, not displayed frames)",
+                          submitted_count / elapsed, largest_title_gap_ns / 1.0e6,
+                          title_slow_gaps, max_pending_window,
+                          REXCVAR_GET(gta4_extra_frames_in_flight));
       submitted_count = 0;
+      title_slow_gaps = 0;
+      largest_title_gap_ns = 0;
+      max_pending_window = 0;
       window_start = now;
     }
   }
   const uint32_t extra = REXCVAR_GET(gta4_extra_frames_in_flight);
   if (extra) {
-    pending = pending > extra ? pending - extra : 0;
+    pending = gta4::android::G925EffectivePending(pending, extra);
     REX_STORE_U32(out + 8, pending);
   }
   if (pending >= 2 && REXCVAR_GET(gta4_frame_wait_sleep)) {

@@ -28,7 +28,7 @@ assert "ShouldReclaimNativeBuffer" in source
 assert "UpdateNativeTexturePressure" in source
 assert "ShouldRetryNativeTextureAllocation" in source
 assert "G925 v2 extended caches preserve safety budget and expiry policy" in tests
-assert "versionCode   = 24" in gradle
-assert '-alpha-1.6-g925-standard60-fast' in gradle
+assert "versionCode   = 25" in gradle
+assert '-alpha-1.7-g925-runahead4-fifo' in gradle
 assert "feature/g925-performance-v2" in workflow
 print("PASS: G925 v2 modest cache extension with existing budget/reclaim protections")

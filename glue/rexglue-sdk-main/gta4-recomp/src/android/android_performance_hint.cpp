@@ -116,7 +116,10 @@ class BusyThreads {
         }
         ticks[tid] = utime + stime;
         const auto last = last_ticks_.find(tid);
-        if (last != last_ticks_.end() && utime + stime - last->second >= kBusyTicks) {
+        // A recycled Linux thread ID may have a smaller new tick counter.
+        // Never treat its unsigned counter underflow as a very busy thread.
+        if (last != last_ticks_.end() && utime + stime >= last->second &&
+            utime + stime - last->second >= kBusyTicks) {
           busy.emplace_back(utime + stime - last->second, tid);
         }
       }

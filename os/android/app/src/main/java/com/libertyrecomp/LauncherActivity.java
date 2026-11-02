@@ -131,6 +131,7 @@ public class LauncherActivity extends Activity {
         File external = getExternalFilesDir(null);
         mDataRoot = external != null ? external : getFilesDir();
         initializeG925Standard60Defaults();
+        initializeG925V5Pacing();
         loadFonts();
         loadSounds();
         setContentView(buildLayout());
@@ -731,10 +732,16 @@ public class LauncherActivity extends Activity {
                     new String[] {"gta4_reflection_aa"},
                     new String[] {"Default", "Off", "Original"},
                     new String[] {"off", "original"}),
-            new GraphicsSetting("Run-ahead frames", "More can raise FPS but adds input delay",
+            new GraphicsSetting("Run-ahead frames",
+                    "4 is experimental: more overlap but more latency/stutter is possible",
                     new String[] {"gta4_extra_frames_in_flight"},
-                    new String[] {"Default", "0", "1", "2"},
-                    new String[] {"0", "1", "2"}),
+                    new String[] {"Default", "0", "1", "2", "3", "4 (test)"},
+                    new String[] {"0", "1", "2", "3", "4"}),
+            new GraphicsSetting("Vulkan pacing",
+                    "Strict FIFO aims for even presentation; requires restarting the game",
+                    new String[] {"vulkan_prefer_present_mode_fifo"},
+                    new String[] {"Default", "Mailbox (previous)", "Strict FIFO (test)"},
+                    new String[] {"false", "true"}),
             new GraphicsSetting("CPU boost",
                     "Extreme asks Android for a 16 ms CPU work target (not an overclock). "
                             + "May increase heat and throttling; compare against Maximum and Steady.",
@@ -786,10 +793,17 @@ public class LauncherActivity extends Activity {
     private static final String G925_STANDARD_PREVIOUS_GRAPHICS = "graphics.before_g925_standard60_v1.txt";
     private static final String[][] G925_STANDARD_60_PROFILE = {
             {"gta4_frame_limit", "60"},
-            {"gta4_extra_frames_in_flight", "0"},
+            {"gta4_extra_frames_in_flight", "4"},
+            {"vulkan_prefer_present_mode_fifo", "true"},
             {"android_performance_hint_target_ms", "20"},
             {"android_thermal_guard", "true"},
     };
+    private static final String[][] G925_SAFE_PACING_PROFILE = {
+            {"gta4_extra_frames_in_flight", "0"},
+            {"vulkan_prefer_present_mode_fifo", "false"},
+    };
+    private static final String G925_V5_PACING_MARKER = ".g925_v5_pacing_initialized";
+    private static final String G925_V5_PREVIOUS_GRAPHICS = "graphics.before_g925_v5_pacing.txt";
     private static final String G925_MAX_DEFAULT_MARKER = ".g925_native_max_v3_initialized";
     private static final String G925_MAX_PREVIOUS_GRAPHICS = "graphics.before_g925_max_v3.txt";
     private static final String[][] G925_NATIVE_MAX_PROFILE = {
@@ -863,6 +877,50 @@ public class LauncherActivity extends Activity {
             }
         } catch (IOException e) {
             Log.e(TAG, "G925 Standard 60 initialization failed; current file preserved", e);
+        } finally {
+            if (staged.isFile()) staged.delete();
+        }
+    }
+
+    /**
+     * One-time v5 migration for users already running Standard60 v1.
+     * Touch ONLY the title run-ahead and Vulkan present policy; all visual
+     * sliders, user-chosen FPS cap, and unrelated settings are preserved.
+     * Keep a backup and do not silently reapply on subsequent launches.
+     */
+    private void initializeG925V5Pacing() {
+        if (!DriverBridge.isMaliBuild()) return;
+        File marker = new File(mDataRoot, G925_V5_PACING_MARKER);
+        if (marker.isFile()) return;
+        File graphics = new File(mDataRoot, LibertyActivity.GRAPHICS_FILE);
+        File backup = new File(mDataRoot, G925_V5_PREVIOUS_GRAPHICS);
+        File staged = new File(mDataRoot, "graphics.g925_v5_pacing.tmp");
+        try {
+            java.util.List<String> lines = graphics.isFile()
+                    ? java.nio.file.Files.readAllLines(graphics.toPath(), StandardCharsets.UTF_8)
+                    : new java.util.ArrayList<>();
+            if (graphics.isFile() && !backup.isFile()) {
+                java.nio.file.Files.copy(graphics.toPath(), backup.toPath());
+            }
+            java.util.List<String> next = new java.util.ArrayList<>();
+            for (String line : lines) {
+                String trimmed = line.trim();
+                if (trimmed.startsWith("--gta4_extra_frames_in_flight=")
+                        || trimmed.startsWith("--vulkan_prefer_present_mode_fifo=")) continue;
+                next.add(line);
+            }
+            next.add("# G925 v5 pacing experiment: set run-ahead to 0 if it stutters.");
+            next.add("--gta4_extra_frames_in_flight=4");
+            next.add("--vulkan_prefer_present_mode_fifo=true");
+            java.nio.file.Files.write(staged.toPath(), next, StandardCharsets.UTF_8);
+            java.nio.file.Files.move(staged.toPath(), graphics.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            try (OutputStream output = new FileOutputStream(marker)) {
+                output.write("G925 v5 pacing applied once\n".getBytes(StandardCharsets.UTF_8));
+            }
+            Log.i(TAG, "G925 v5: Run-ahead 4 / FIFO test enabled; existing visuals preserved");
+        } catch (IOException e) {
+            Log.e(TAG, "G925 v5 pacing migration failed; original graphics kept or backed up", e);
         } finally {
             if (staged.isFile()) staged.delete();
         }
@@ -987,14 +1045,21 @@ public class LauncherActivity extends Activity {
 
         // G925 Native Max v3. One-time defaults already applied on first launch.
         card.addView(heading("G925 STANDARD 60 - DEFAULT GRAPHICS", 18), matchWrap(dp(8)));
-        card.addView(text("Standard image quality with a 60 FPS CAP, run-ahead 0 and balanced "
-                + "thermal handling. Actual FPS depends on game/render performance. "
-                + "ALL HIGH below is optional and may be much slower.",
+        card.addView(text("Standard graphics with a 60 FPS CAP, experimental run-ahead 4 and "
+                + "strict FIFO frame pacing. If stuttering increases, use the fallback below. "
+                + "60 FPS is a target, not a guarantee.",
                 12, R.color.picker_muted), matchWrap(dp(8)));
-        Button g925Standard60 = button("G925 STANDARD / 60 FPS", true);
+        Button g925Standard60 = button("G925 STANDARD / 60 FPS + RA4", true);
         g925Standard60.setOnClickListener(v -> resetGraphicsToStandard60());
         card.addView(g925Standard60, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        Button g925StableFallback = button("G925 STUTTER FALLBACK / RA0", false);
+        g925StableFallback.setOnClickListener(v -> {
+            resetGraphicsToStandard60();
+            applyG925Preset(G925_SAFE_PACING_PROFILE, "G925 safe pacing / run-ahead 0");
+        });
+        card.addView(g925StableFallback, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
         Button g925NativeMax = button("G925 NATIVE MAX / ALL HIGH", true);
         g925NativeMax.setOnClickListener(v -> applyG925Preset(
                 G925_NATIVE_MAX_PROFILE, "G925 Native Max"));
@@ -1175,13 +1240,13 @@ public class LauncherActivity extends Activity {
         return card;
     }
 
-    /** Reset every visual selector; only CPU/queue policy and the FPS cap differ. */
+    /** Reset every visual selector; only CPU/queue/pacing policy and the FPS cap differ. */
     private void resetGraphicsToStandard60() {
         for (int i = 0; i < mGraphicsSpinners.length; ++i) {
             mGraphicsSpinners[i].setSelection(0, false);
             mGraphicsPositions[i] = 0;
         }
-        applyG925Preset(G925_STANDARD_60_PROFILE, "G925 Standard graphics / 60 FPS");
+        applyG925Preset(G925_STANDARD_60_PROFILE, "G925 Standard graphics / 60 FPS + RA4");
     }
 
     /** Apply documented launcher options; do not modify GPU drivers or user saves. */
@@ -1229,6 +1294,7 @@ public class LauncherActivity extends Activity {
             case "Draw distance":
             case "Population density":
             case "Run-ahead frames":
+            case "Vulkan pacing":
             case "CPU boost":
             case "Heat guard":
             case "Thread waiting":

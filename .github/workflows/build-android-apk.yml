@@ -10,7 +10,7 @@ name: Android APK
 
 on:
   push:
-    branches: [mali-dimensity-8400, feature/g925-graphics-lab, feature/g925-performance-v2, feature/g925-native-max-v3, feature/g925-v4-stutter-diagnostics]
+    branches: [mali-dimensity-8400, feature/g925-graphics-lab, feature/g925-performance-v2, feature/g925-native-max-v3, feature/g925-v4-stutter-diagnostics, feature/g925-v5-runahead4-pacing]
     # Changes that cannot affect the APK do not start a build: documentation,
     # images for the README, and the other workflows.
     paths-ignore:
@@ -89,6 +89,7 @@ jobs:
           python tools/test_g925_cache_policy.py
           python tools/test_g925_native_max_v3.py
           python tools/test_g925_v4_diagnostics.py
+          python tools/test_g925_v5_pacing.py
           python tools/test_g925_fast_apk.py
 
       - name: Install CMake and Ninja
@@ -226,6 +227,7 @@ jobs:
           python tools/test_g925_cache_policy.py
           python tools/test_g925_native_max_v3.py
           python tools/test_g925_v4_diagnostics.py
+          python tools/test_g925_v5_pacing.py
 
       - name: Verify previous APK matches native sources in this commit
         env:
