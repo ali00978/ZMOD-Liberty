@@ -10,7 +10,7 @@ name: Android APK
 
 on:
   push:
-    branches: [feature/g925-native-frametime-v2]
+    branches: [feature/g925-native-pipeline-stability-v21]
     # Changes that cannot affect the APK do not start a build: documentation,
     # images for the README, and the other workflows.
     paths-ignore:
@@ -87,6 +87,7 @@ jobs:
           python tools/test_g925_fast_apk.py
           python tools/test_g925_official_clean.py
           python tools/test_g925_native_frametime_v2.py
+          python tools/test_g925_pipeline_stability_v21.py
 
       - name: Install CMake and Ninja
         run: python -m pip install 'cmake>=3.29,<5' ninja
@@ -220,6 +221,7 @@ jobs:
           python tools/test_g925_fast_apk.py
           python tools/test_g925_official_clean.py
           python tools/test_g925_native_frametime_v2.py
+          python tools/test_g925_pipeline_stability_v21.py
 
       - name: Verify previous APK matches native sources in this commit
         env:

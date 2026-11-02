@@ -33,18 +33,43 @@ class NativePipelineCompiler {
     if (stopping_) {
       return false;
     }
-    if (jobs_.contains(key)) {
+    if (auto existing = jobs_.find(key); existing != jobs_.end()) {
+      if (demanded && !existing->second->demanded) {
+        // A speculative request becomes an exact first-use pipeline:
+        // mark it non-evictable and move it ahead of speculative work.
+        existing->second->demanded = true;
+        auto queued = std::find(queue_.begin(), queue_.end(), key);
+        if (queued != queue_.end() && queued != queue_.begin()) {
+          queue_.erase(queued);
+          queue_.push_front(key);
+        }
+        changed_.notify_all();
+      }
       return true;
     }
     if (jobs_.size() >= capacity_) {
-      if (!demanded || queue_.empty()) {
-        return false;
+      if (!demanded) return false;
+      // The old code evicted queue_.back() without checking whether it had
+      // already become a demanded pipeline. Under sustained new-scene loads
+      // that could drop exact first-use work and force a synchronous Vulkan
+      // compile on the rendering thread. Evict ONLY unstarted speculative
+      // work; otherwise preserve all demanded jobs and let the caller use
+      // its existing safe capacity fallback.
+      bool evicted = false;
+      for (auto it = queue_.end(); it != queue_.begin();) {
+        --it;
+        auto found = jobs_.find(*it);
+        if (found != jobs_.end() && !found->second->demanded) {
+          jobs_.erase(found);
+          queue_.erase(it);
+          evicted = true;
+          break;
+        }
       }
-      // Drop only an unstarted speculative recipe to admit an exact first use.
-      jobs_.erase(queue_.back());
-      queue_.pop_back();
+      if (!evicted) return false;
     }
     auto job = std::make_shared<Job>();
+    job->demanded = demanded;
     job->compile = std::move(compile);
     jobs_.emplace(key, job);
     if (demanded) {
@@ -66,6 +91,10 @@ class NativePipelineCompiler {
     }
     const auto job = found->second;
     if (wait && !job->result) {
+      // This caller needs the exact pipeline before rendering. A different
+      // demanded request may fill the queue while this one is being awaited.
+      // Protect the waiter from speculative-admission eviction.
+      job->demanded = true;
       const auto queued = std::find(queue_.begin(), queue_.end(), key);
       if (queued != queue_.end() && queued != queue_.begin()) {
         queue_.erase(queued);
@@ -120,6 +149,7 @@ class NativePipelineCompiler {
   struct Job {
     Compile compile;
     std::optional<Result> result;
+    bool demanded = false;
   };
   void Run() {
     std::unique_lock lock(mutex_);
