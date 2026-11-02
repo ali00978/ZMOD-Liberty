@@ -23,6 +23,15 @@ assert 'promotes a duplicate speculative request' in unit
 assert 'CHECK_FALSE(can_displace_demanded)' in unit
 assert 'CHECK(evicted2)' in unit
 assert '--gta4_native_max_queued_frames=3' in source
+java = (root / "os/android/app/src/main/java/com/libertyrecomp/LauncherActivity.java").read_text()
+assert 'Button shareStutter = button("SHARE STUTTER REPORT"' in java
+assert 'shareG925StutterReport()' in java
+assert 'readG925StutterReport()' in java
+assert 'line.contains("title-fps:")' in java
+assert 'line.contains("performance-hint:")' in java
+assert 'new Intent(Intent.ACTION_SEND)' in java
+assert 'recent.size() > 150' in java
+assert 'play for 2 minutes' in java
 assert 'kNativeTextureEvictionGraceFrames = 240;' in old
 assert 'branches: [feature/g925-native-pipeline-stability-v21]' in workflow
 assert "github.event_name == 'push'" in workflow

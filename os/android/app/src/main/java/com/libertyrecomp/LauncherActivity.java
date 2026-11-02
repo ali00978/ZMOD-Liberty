@@ -441,6 +441,18 @@ public class LauncherActivity extends Activity {
         row.addView(perfTest, perfParams);
         panel.addView(row, matchWrap(dp(12)));
 
+        // Android 11+ restricts access to Android/data from normal file
+        // browsers. Share a small filtered performance report from the app
+        // itself rather than requiring developer tools or raw logcat access.
+        Button shareStutter = button("SHARE STUTTER REPORT", false);
+        shareStutter.setOnClickListener(v -> shareG925StutterReport());
+        panel.addView(shareStutter, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
+        panel.addView(text("First use PLAY WITH DEBUG LOG, drive for a few minutes, "
+                + "then return here and share the report. Only game performance "
+                + "lines are included, not the full log.", 12, R.color.picker_muted),
+                matchWrap(dp(10)));
+
         panel.addView(text("Tip: hold PAUSE in game to move and resize the touch buttons.",
                 13, R.color.picker_muted), matchWrap(dp(14)));
         return panel;
@@ -1413,6 +1425,78 @@ public class LauncherActivity extends Activity {
                 mCrashCard.setVisibility(View.VISIBLE);
             });
         }, "CrashReports").start();
+    }
+
+    /**
+     * The native G925 frame classifier already records real title-submission
+     * gaps. Expose the latest log's relevant lines without leaking other apps'
+     * logs, full filesystem paths, system diagnostics or user content.
+     *
+     * A report is created only when the user explicitly taps Share.
+     */
+    private void shareG925StutterReport() {
+        new Thread(() -> {
+            String report;
+            try {
+                report = readG925StutterReport();
+            } catch (IOException e) {
+                Log.w(TAG, "Could not read G925 performance log", e);
+                report = null;
+            }
+            final String text = report;
+            mMain.post(() -> {
+                if (text == null || text.isEmpty()) {
+                    toast("No performance log yet. Choose PLAY WITH DEBUG LOG, "
+                            + "play for 2 minutes, then share.");
+                    return;
+                }
+                Intent send = new Intent(Intent.ACTION_SEND);
+                send.setType("text/plain");
+                send.putExtra(Intent.EXTRA_SUBJECT, "ZMOD Liberty G925 frame-stutter report");
+                send.putExtra(Intent.EXTRA_TEXT, text);
+                try {
+                    startActivity(Intent.createChooser(send, "Share G925 performance report"));
+                } catch (Exception e) {
+                    Log.w(TAG, "Could not open share sheet", e);
+                    toast("No sharing app available. Performance log is in debug_logs.");
+                }
+            });
+        }, "G925StutterReport").start();
+    }
+
+    private String readG925StutterReport() throws IOException {
+        File folder = DebugLog.directory(mDataRoot);
+        File[] logs = folder.listFiles((dir, name) ->
+                name.startsWith("debug-") && name.endsWith(".log"));
+        if (logs == null || logs.length == 0) return null;
+        Arrays.sort(logs, (a, b) -> a.getName().compareTo(b.getName()));
+        File latest = logs[logs.length - 1];
+        // Last 150 relevant events are enough for a multi-minute scene test.
+        // Reading stays on a worker thread and never blocks the UI or game.
+        java.util.ArrayDeque<String> recent = new java.util.ArrayDeque<>();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                new FileInputStream(latest), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                // Keep only the app's own frame/power diagnostic messages.
+                // Never share a raw logcat dump, filenames or user input.
+                if (!line.contains("LibertyRecomp:")) continue;
+                if (!line.contains("title-fps:")
+                        && !line.contains("performance-hint:")) continue;
+                recent.addLast(line.length() > 320 ? line.substring(0, 320) : line);
+                if (recent.size() > 150) recent.removeFirst();
+            }
+        }
+        if (recent.isEmpty()) return null;
+        StringBuilder result = new StringBuilder(
+                "ZMOD Liberty G925 stutter analysis\\n"
+                + "Source: latest PLAY WITH DEBUG LOG session. "
+                + "Title FPS/intervals are game submissions, not GPU presented frames.\\n"
+                + "Please compare the same scene and phone temperature.\\n\\n");
+        for (String line : recent) {
+            result.append(line).append('\\n');
+        }
+        return result.toString();
     }
 
     private void shareCrash() {

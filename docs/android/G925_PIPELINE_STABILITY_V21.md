@@ -36,3 +36,11 @@ yet demonstrated the bottleneck. Run identical scene tests at CPU response
 `title-fps:` lines to classify remaining stalls.
 
 A success status from GitHub Actions confirms the build, not device FPS.
+
+## Share a real phone performance report
+
+The launcher now offers **SHARE STUTTER REPORT** under Play. Start the game
+using **PLAY WITH DEBUG LOG**, reproduce the stutter for 2 minutes, return to
+the launcher, and share. The button selects the latest debug session and
+returns only the last 150 `LibertyRecomp` title-fps and performance-hint lines.
+Unrelated logcat messages, system traces and game files are not shared.
