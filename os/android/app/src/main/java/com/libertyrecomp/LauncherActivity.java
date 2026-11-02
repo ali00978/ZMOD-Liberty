@@ -1153,12 +1153,26 @@ public class LauncherActivity extends Activity {
 
         Button reset = button("RESET TO DEFAULT", false);
         reset.setOnClickListener(v -> {
+            // Standard keeps the original graphics defaults but targets 60 FPS.
             for (int i = 0; i < mGraphicsSpinners.length; ++i) {
                 mGraphicsSpinners[i].setSelection(0, false);
                 mGraphicsPositions[i] = 0;
             }
+            // Explicitly override only the frame limiter; leave every visual selector at Default.
+            for (int i = 0; i < GRAPHICS_SETTINGS.length; ++i) {
+                if ("gta4_frame_limit".equals(GRAPHICS_SETTINGS[i].cvars[0])) {
+                    for (int j = 0; j < GRAPHICS_SETTINGS[i].values.length; ++j) {
+                        if ("60".equals(GRAPHICS_SETTINGS[i].values[j])) {
+                            mGraphicsSpinners[i].setSelection(j + 1, false);
+                            mGraphicsPositions[i] = j + 1;
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
             markSettingsChanged();
-            toast("Graphics settings set to Default - press Save changes");
+            toast("Standard graphics + 60 FPS cap - press Save changes");
         });
         LinearLayout.LayoutParams resetParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
