@@ -252,7 +252,9 @@ jobs:
           "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
 
       - name: Prepare pinned SDL Java dependency sources
-        run: python tools/setup_repo.py
+        run: |
+          python tools/setup_repo.py
+          python os/android/scripts/materialize_symlinks.py
 
       - name: Restore native libraries and title assets from compatible APK
         run: |
