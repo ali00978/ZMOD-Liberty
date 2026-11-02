@@ -1489,12 +1489,12 @@ public class LauncherActivity extends Activity {
         }
         if (recent.isEmpty()) return null;
         StringBuilder result = new StringBuilder(
-                "ZMOD Liberty G925 stutter analysis\\n"
+                "ZMOD Liberty G925 stutter analysis\n"
                 + "Source: latest PLAY WITH DEBUG LOG session. "
-                + "Title FPS/intervals are game submissions, not GPU presented frames.\\n"
-                + "Please compare the same scene and phone temperature.\\n\\n");
+                + "Title FPS/intervals are game submissions, not GPU presented frames.\n"
+                + "Please compare the same scene and phone temperature.\n\n");
         for (String line : recent) {
-            result.append(line).append('\\n');
+            result.append(line).append('\n');
         }
         return result.toString();
     }
