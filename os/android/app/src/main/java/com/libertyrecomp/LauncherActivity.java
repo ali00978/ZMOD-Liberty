@@ -130,6 +130,13 @@ public class LauncherActivity extends Activity {
         }
         File external = getExternalFilesDir(null);
         mDataRoot = external != null ? external : getFilesDir();
+        // One-time recovery for installations carrying a known experimental G925
+        // marker. Other installations retain their configuration until the
+        // user explicitly chooses a clean baseline in Graphics & Controls.
+        if (hasLegacyG925Experiment() &&
+                !new File(mDataRoot, G925_OFFICIAL_CLEAN_MARKER).isFile()) {
+            restoreOfficialConfig("60");
+        }
         loadFonts();
         loadSounds();
         setContentView(buildLayout());
@@ -648,6 +655,185 @@ public class LauncherActivity extends Activity {
         return frame;
     }
 
+
+    // This edition begins with the original Mali-compatible Android port.
+    // Unlike older G925 experiments, it never changes shader, cache or queue
+    // behavior in the installed native engine.
+    private static final String G925_OFFICIAL_CLEAN_MARKER = ".g925_official_clean_v1";
+
+    private boolean hasLegacyG925Experiment() {
+        for (String legacy : new String[] {
+                ".g925_native_max_v3_initialized",
+                ".g925_standard60_v1_initialized",
+                ".g925_v5_pacing_initialized",
+                ".g925_stock_stable_v1"}) {
+            if (new File(mDataRoot, legacy).isFile()) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Reset ONLY configuration files, never the installed game, saves, driver
+     * or shader caches. Preserve originals in a distinct timestamped folder.
+     * This allows a proper test against the official engine after upgrading
+     * from the earlier experimental G925 branches.
+     */
+    private boolean restoreOfficialConfig(String cap) {
+        if (!DriverBridge.isMaliBuild()) return false;
+        File backupRoot = new File(mDataRoot, "g925-official-backups");
+        File backup = new File(backupRoot,
+                "before-reset-" + System.currentTimeMillis());
+        File args = new File(mDataRoot, "args.txt");
+        File graphics = new File(mDataRoot, LibertyActivity.GRAPHICS_FILE);
+        File overlay = new File(mDataRoot, LibertyActivity.OVERLAY_FILE);
+        File environment = new File(mDataRoot, "env.txt");
+        File nativeConfig = new File(new File(mDataRoot, "LibertyRecomp"), "native.toml");
+        try {
+            if (!backup.mkdirs()) throw new IOException("Could not create backup folder");
+            for (File original : new File[] {
+                    args, graphics, overlay, environment, nativeConfig}) {
+                if (!original.isFile()) continue;
+                java.nio.file.Files.copy(original.toPath(),
+                        new File(backup, original.equals(nativeConfig)
+                                ? "native.toml" : original.getName()).toPath());
+            }
+
+            // Keep existing touch layouts, but clear all prior visual presets.
+            java.util.Map<String, String> old = readGraphicsSettings();
+            StringBuilder cleanGraphics = new StringBuilder(
+                    "# Official Mali baseline - original renderer, no G925 experiments.\n"
+                    + "--gta4_frame_limit=" + cap + "\n"
+                    + "--gta4_extra_frames_in_flight=0\n");
+            for (GraphicsSetting setting : GRAPHICS_SETTINGS) {
+                String key = setting.cvars[0];
+                if (!key.startsWith("gta4_touch")) continue;
+                String value = old.get(key);
+                for (String allowed : setting.values) {
+                    if (allowed.equals(value)) {
+                        cleanGraphics.append("--").append(key).append("=")
+                                .append(value).append('\n');
+                        break;
+                    }
+                }
+            }
+
+            // Read the APK's original bundled profile rather than inheriting
+            // a manually modified args.txt from any previous APK.
+            byte[] cleanArgs;
+            try (InputStream in = getAssets().open("default_args.txt");
+                    ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                byte[] bytes = new byte[4096];
+                int count;
+                while ((count = in.read(bytes)) >= 0) {
+                    if (count > 0) out.write(bytes, 0, count);
+                }
+                cleanArgs = out.toByteArray();
+            }
+            writeCleanConfig(args, cleanArgs);
+            writeCleanConfig(graphics, cleanGraphics.toString()
+                    .getBytes(StandardCharsets.UTF_8));
+            writeCleanConfig(overlay, ("# Disabled for clean performance baseline.\n")
+                    .getBytes(StandardCharsets.UTF_8));
+            // env.txt can contain old GPU-performance overrides. Back it up,
+            // then remove them; driver.txt is intentionally never changed.
+            if (environment.isFile()) {
+                writeCleanConfig(environment, "# Reset GPU environment overrides.\n"
+                        .getBytes(StandardCharsets.UTF_8));
+            }
+            if (nativeConfig.isFile()) {
+                java.util.Set<String> keys = new java.util.HashSet<>();
+                for (GraphicsSetting setting : GRAPHICS_SETTINGS) {
+                    if (setting.cvars[0].startsWith("gta4_touch")) continue;
+                    keys.addAll(Arrays.asList(setting.cvars));
+                }
+                keys.addAll(Arrays.asList(
+                        "gta4_native_max_queued_frames",
+                        "gta4_extra_frames_in_flight", "gta4_frame_wait_sleep",
+                        "gta4_dynamic_draw_distance", "gta4_fps_guard",
+                        "gta4_anisotropic_filtering", "gta4_reflection_resolution",
+                        "gta4_reflection_capture_distance",
+                        "gta4_native_upscaler", "gta4_fsr1_quality",
+                        "android_performance_hint_target_ms",
+                        "android_thermal_guard",
+                        "vulkan_prefer_present_mode_fifo",
+                        "vulkan_allow_present_mode_mailbox",
+                        "vulkan_allow_present_mode_immediate"));
+                java.util.List<String> lines = java.nio.file.Files.readAllLines(
+                        nativeConfig.toPath(), StandardCharsets.UTF_8);
+                lines.removeIf(line -> {
+                    String clean = line.trim();
+                    if (clean.startsWith("#")) return false;
+                    int equals = clean.indexOf('=');
+                    if (equals <= 0) return false;
+                    String key = clean.substring(0, equals).trim().replace("\"", "");
+                    return keys.contains(key);
+                });
+                java.nio.file.Files.write(nativeConfig.toPath(), lines,
+                        StandardCharsets.UTF_8);
+            }
+
+            // The performance-test dialog has independent overrides that take
+            // precedence over graphics.txt; reset those experiments too.
+            if (!perfTestPreferences().edit().clear().commit()) {
+                Log.w(TAG, "Could not persist performance test reset");
+            }
+            writeCleanConfig(new File(mDataRoot, G925_OFFICIAL_CLEAN_MARKER),
+                    "Original Mali config restored\n".getBytes(StandardCharsets.UTF_8));
+            Log.i(TAG, "G925 official baseline: settings backed up in " + backup);
+            return true;
+        } catch (IOException e) {
+            Log.e(TAG, "G925 official reset failed, backups kept in " + backup, e);
+            toast("Clean baseline reset failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private static void writeCleanConfig(File file, byte[] data) throws IOException {
+        File staged = new File(file.getParentFile(), file.getName() + ".g925.tmp");
+        try {
+            java.nio.file.Files.write(staged.toPath(), data);
+            java.nio.file.Files.move(staged.toPath(), file.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            if (staged.isFile()) staged.delete();
+        }
+    }
+
+    /** Visual settings unchanged; only frame cap and queue-ahead are selected. */
+    private void chooseOfficialFrameCap(String cap, boolean resetGraphics) {
+        for (int i = 0; i < GRAPHICS_SETTINGS.length; i++) {
+            GraphicsSetting setting = GRAPHICS_SETTINGS[i];
+            String key = setting.cvars[0];
+            if (key.startsWith("gta4_touch")) continue;
+            if (resetGraphics || key.equals("gta4_frame_limit")
+                    || key.equals("gta4_extra_frames_in_flight")) {
+                mGraphicsSpinners[i].setSelection(0, false);
+                mGraphicsPositions[i] = 0;
+            }
+            String choice = null;
+            if (key.equals("gta4_frame_limit")) choice = cap;
+            if (key.equals("gta4_extra_frames_in_flight")) choice = "0";
+            if (choice == null) continue;
+            for (int j = 0; j < setting.values.length; j++) {
+                if (choice.equals(setting.values[j])) {
+                    mGraphicsSpinners[i].setSelection(j + 1, false);
+                    mGraphicsPositions[i] = j + 1;
+                    break;
+                }
+            }
+        }
+        markSettingsChanged();
+    }
+
+    private void cleanOfficialAndSelect60() {
+        if (!restoreOfficialConfig("60")) return;
+        chooseOfficialFrameCap("60", true);
+        for (CheckBox checkbox : mOverlayBoxes) {
+            if (checkbox != null) checkbox.setChecked(false);
+        }
+        saveSettings(false);
+        toast("Original engine/config restored; backup in g925-official-backups.");
+    }
     // Graphics settings: one dropdown per setting, saved to graphics.txt, which
     // LibertyActivity appends after args.txt. "Default" writes nothing, so the
     // value from args.txt applies.
@@ -697,23 +883,6 @@ public class LauncherActivity extends Activity {
                     new String[] {"Default", "Very low (20%)", "Low (30%)", "Medium (40%)",
                             "High (70%)", "Console (100%)"},
                     new String[] {"0.2", "0.3", "0.4", "0.7", "1.0"}),
-            // G925 GRAPHICS LAB v1 - optional image-quality controls
-            new GraphicsSetting("Reflection resolution", "Higher can be slower on Mali GPUs",
-                    new String[] {"gta4_reflection_resolution"},
-                    new String[] {"Default", "Original", "1080p", "Full"},
-                    new String[] {"original", "1080p", "full"}),
-            new GraphicsSetting("Reflection distance", "How far reflection captures render the world",
-                    new String[] {"gta4_reflection_capture_distance"},
-                    new String[] {"Default", "Near", "Original", "Extended", "Far"},
-                    new String[] {"near", "original", "extended", "far"}),
-            new GraphicsSetting("Dynamic draw distance", "Automatically reduces draw distance under load",
-                    new String[] {"gta4_dynamic_draw_distance"},
-                    new String[] {"Default", "On", "Off"},
-                    new String[] {"true", "false"}),
-            new GraphicsSetting("Reflection FPS guard", "Refreshes reflections less often below 30 FPS",
-                    new String[] {"gta4_fps_guard"},
-                    new String[] {"Default", "Off", "Normal", "Strong"},
-                    new String[] {"0", "1", "2"}),
             new GraphicsSetting("Shadow quality", "High is sharper and costs some GPU time",
                     new String[] {"gta4_shadow_map_base_size"},
                     new String[] {"Default", "Console", "High"},
@@ -857,64 +1026,33 @@ public class LauncherActivity extends Activity {
         for (LinearLayout page : pages) card.addView(page, matchWrap(dp(4)));
         selectGraphicsTab(tabs, pages, 0);
 
-        // G925 GRAPHICS LAB v1 - changes only graphics selectors, not Android drivers.
-        card.addView(heading("IMMORTALIS G925 GRAPHICS LAB", 17), matchWrap(dp(8)));
-        card.addView(text("Optional graphics presets. Sharp is balanced, Visual+ uses FSR "
-                + "Ultra Quality with sharper shadows; Ultra is a short benchmark only. "
-                + "Higher graphics settings may LOWER FPS. Press Save changes, then Play.",
+
+        card.addView(heading("OFFICIAL MALI / CLEAN PERFORMANCE BASELINE", 17),
+                matchWrap(dp(8)));
+        card.addView(text("Original native renderer and Mali System Vulkan driver; no "
+                + "experimental GPU cache, frame pacing or ALL HIGH overrides. "
+                + "Clean reset backs up old config without deleting saves, "
+                + "game files or shader caches. Start with 60 FPS cap; "
+                + "40 FPS is a smoother fallback when the device cannot sustain 60.",
                 12, R.color.picker_muted), matchWrap(dp(8)));
-        Button g925Preset0 = button("G925 SHARP / BALANCED", false);
-        g925Preset0.setOnClickListener(v -> applyG925Preset(new String[][] {
-                {"gta4_output_height_cap", "900"},
-                {"gta4_native_upscaler", "native"},
-                {"gta4_native_anti_aliasing", "smaa"},
-                {"gta4_frame_limit", "40"},
-                {"gta4_draw_distance_scale", "1.0"},
-                {"gta4_traffic_density_scale", "0.4"},
-                {"gta4_shadow_map_base_size", "256"},
-                {"gta4_reflection_resolution", "original"},
-                {"gta4_reflection_capture_distance", "near"},
-                {"gta4_dynamic_draw_distance", "true"},
-                {"gta4_fps_guard", "2"},
-                {"gta4_motion_blur", "false"}
-        }, "G925 Sharp / Balanced"));
-        card.addView(g925Preset0, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
-        Button g925Preset1 = button("G925 VISUAL+", false);
-        g925Preset1.setOnClickListener(v -> applyG925Preset(new String[][] {
-                {"gta4_output_height_cap", "1080"},
-                {"gta4_native_upscaler", "fsr1"},
-                {"gta4_fsr1_quality", "ultra_quality"},
-                {"gta4_native_anti_aliasing", "smaa"},
-                {"gta4_frame_limit", "40"},
-                {"gta4_draw_distance_scale", "1.0"},
-                {"gta4_traffic_density_scale", "0.4"},
-                {"gta4_shadow_map_base_size", "512"},
-                {"gta4_reflection_resolution", "original"},
-                {"gta4_reflection_capture_distance", "near"},
-                {"gta4_dynamic_draw_distance", "true"},
-                {"gta4_fps_guard", "2"},
-                {"gta4_motion_blur", "false"}
-        }, "G925 Visual+"));
-        card.addView(g925Preset1, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
-        Button g925Preset2 = button("G925 ULTRA - BENCHMARK ONLY", false);
-        g925Preset2.setOnClickListener(v -> applyG925Preset(new String[][] {
-                {"gta4_output_height_cap", "1080"},
-                {"gta4_native_upscaler", "native"},
-                {"gta4_native_anti_aliasing", "smaa"},
-                {"gta4_frame_limit", "60"},
-                {"gta4_draw_distance_scale", "1.2"},
-                {"gta4_traffic_density_scale", "0.7"},
-                {"gta4_shadow_map_base_size", "512"},
-                {"gta4_reflection_resolution", "1080p"},
-                {"gta4_reflection_capture_distance", "original"},
-                {"gta4_dynamic_draw_distance", "false"},
-                {"gta4_fps_guard", "0"},
-                {"gta4_motion_blur", "false"}
-        }, "G925 Ultra benchmark"));
-        card.addView(g925Preset2, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        Button cleanOfficial = button("CLEAN ORIGINAL SETTINGS + 60 FPS", true);
+        cleanOfficial.setOnClickListener(v -> cleanOfficialAndSelect60());
+        card.addView(cleanOfficial, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        Button official40 = button("ORIGINAL GRAPHICS / STEADY 40 FPS", false);
+        official40.setOnClickListener(v -> {
+            chooseOfficialFrameCap("40", false);
+            toast("Original graphics, 40 FPS cap. Save changes, then Play.");
+        });
+        card.addView(official40, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        Button official60 = button("ORIGINAL GRAPHICS / 60 FPS CAP", false);
+        official60.setOnClickListener(v -> {
+            chooseOfficialFrameCap("60", false);
+            toast("Original graphics, 60 FPS cap. Save changes, then Play.");
+        });
+        card.addView(official60, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
 
         Button reset = button("RESET TO DEFAULT", false);
         reset.setOnClickListener(v -> {
@@ -930,33 +1068,6 @@ public class LauncherActivity extends Activity {
         resetParams.topMargin = dp(14);
         card.addView(reset, resetParams);
         return card;
-    }
-
-    /** Apply documented launcher options; do not modify GPU drivers or user saves. */
-    private void applyG925Preset(String[][] overrides, String profileName) {
-        int applied = 0;
-        for (String[] entry : overrides) {
-            String key = entry[0], value = entry[1];
-            for (int i = 0; i < GRAPHICS_SETTINGS.length; i++) {
-                GraphicsSetting setting = GRAPHICS_SETTINGS[i];
-                if (!setting.cvars[0].equals(key)) continue;
-                for (int choice = 0; choice < setting.values.length; choice++) {
-                    if (!setting.values[choice].equals(value)) continue;
-                    mGraphicsSpinners[i].setSelection(choice + 1, false);
-                    mGraphicsPositions[i] = choice + 1;
-                    applied++;
-                    break;
-                }
-            }
-        }
-        if (applied != overrides.length) {
-            Log.w(TAG, "G925 preset " + profileName + " applied only "
-                    + applied + "/" + overrides.length + " settings");
-            toast("G925 preset incomplete - check current app version");
-            return;
-        }
-        markSettingsChanged();
-        toast(profileName + " - press Save changes, then Play");
     }
 
     private void selectGraphicsTab(TextView[] tabs, LinearLayout[] pages, int index) {

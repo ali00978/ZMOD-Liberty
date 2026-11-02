@@ -53,12 +53,12 @@ android {
         // 28: ASharedMemory (26) for guest memory and AAudio (27) for audio.
         minSdk        = 29
         targetSdk     = 35
-        // G925 Graphics Lab preview: higher than Mali alpha 1.5 (19).
-        // Back up saves before installing and check the APK signature matches.
-        versionCode   = 20
+        // Higher than every earlier build (upstream 0.5.9.3 and Mali alpha 1.4 are 18),
+        // so it installs as an update over either.
+        versionCode   = 27
         // Shown as e.g. 0.5.9.3-mali-alpha-1.5. The workflow reads both the
         // base version and versionSuffix to name the APK.
-        val versionSuffix = "-alpha-1.5-g925-lab1"
+        val versionSuffix = "-alpha-1.9-g925-official-clean"
         versionName   = "0.5.9.3" + (if (libertyGpu == "mali") "-mali" else "") + versionSuffix
 
         // Read by DriverBridge.defaultMode(): the driver used when driver.txt
