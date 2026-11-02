@@ -703,7 +703,10 @@ public class LauncherActivity extends Activity {
             StringBuilder cleanGraphics = new StringBuilder(
                     "# Official Mali baseline - original renderer, no G925 experiments.\n"
                     + "--gta4_frame_limit=" + cap + "\n"
-                    + "--gta4_extra_frames_in_flight=0\n");
+                    + "--gta4_extra_frames_in_flight=0\n"
+                    + "--android_perf_hint=true\n"
+                    + "--android_perf_hint_target_ms=20\n"
+                    + "--android_performance_hint=false\n");
             for (GraphicsSetting setting : GRAPHICS_SETTINGS) {
                 String key = setting.cvars[0];
                 if (!key.startsWith("gta4_touch")) continue;
@@ -753,7 +756,11 @@ public class LauncherActivity extends Activity {
                         "gta4_anisotropic_filtering", "gta4_reflection_resolution",
                         "gta4_reflection_capture_distance",
                         "gta4_native_upscaler", "gta4_fsr1_quality",
+                        "android_perf_hint",
+                        "android_perf_hint_target_ms",
+                        "android_performance_hint",
                         "android_performance_hint_target_ms",
+                        "gta4_frame_pacing_log",
                         "android_thermal_guard",
                         "vulkan_prefer_present_mode_fifo",
                         "vulkan_allow_present_mode_mailbox",
@@ -825,9 +832,34 @@ public class LauncherActivity extends Activity {
         markSettingsChanged();
     }
 
+    /** Select only one Android Performance Hint producer at a time. */
+    private void chooseG925CpuPolicy(boolean original) {
+        String[][] choices = {
+                {"android_perf_hint", original ? "true" : "false"},
+                {"android_perf_hint_target_ms", "20"},
+                {"android_performance_hint", original ? "false" : "true"},
+                {"android_performance_hint_target_ms", "20"},
+        };
+        for (String[] choice : choices) {
+            for (int i = 0; i < GRAPHICS_SETTINGS.length; ++i) {
+                GraphicsSetting setting = GRAPHICS_SETTINGS[i];
+                if (!choice[0].equals(setting.cvars[0])) continue;
+                for (int n = 0; n < setting.values.length; ++n) {
+                    if (!choice[1].equals(setting.values[n])) continue;
+                    mGraphicsSpinners[i].setSelection(n + 1, false);
+                    mGraphicsPositions[i] = n + 1;
+                    break;
+                }
+                break;
+            }
+        }
+        markSettingsChanged();
+    }
+
     private void cleanOfficialAndSelect60() {
         if (!restoreOfficialConfig("60")) return;
         chooseOfficialFrameCap("60", true);
+        chooseG925CpuPolicy(true);
         for (CheckBox checkbox : mOverlayBoxes) {
             if (checkbox != null) checkbox.setChecked(false);
         }
@@ -899,6 +931,26 @@ public class LauncherActivity extends Activity {
                     new String[] {"gta4_extra_frames_in_flight"},
                     new String[] {"Default", "0", "1", "2"},
                     new String[] {"0", "1", "2"}),
+            new GraphicsSetting("Original Android CPU hint",
+                    "Official Android scheduler; pair ON with Mali hint OFF",
+                    new String[] {"android_perf_hint"},
+                    new String[] {"Default", "On", "Off"},
+                    new String[] {"true", "false"}),
+            new GraphicsSetting("Original CPU target",
+                    "Request 20 ms for 60 FPS testing; default upstream is 30 ms",
+                    new String[] {"android_perf_hint_target_ms"},
+                    new String[] {"Default", "30 ms", "20 ms", "17 ms"},
+                    new String[] {"30", "20", "17"}),
+            new GraphicsSetting("Mali CPU hint",
+                    "Mali fork's separate background sampler; do not run both hints",
+                    new String[] {"android_performance_hint"},
+                    new String[] {"Default", "On", "Off"},
+                    new String[] {"true", "false"}),
+            new GraphicsSetting("Frame pacing diagnostic",
+                    "Opt-in logging of frame gaps; enable only for debugging",
+                    new String[] {"gta4_frame_pacing_log"},
+                    new String[] {"Default", "Off", "On"},
+                    new String[] {"false", "true"}),
             new GraphicsSetting("CPU boost",
                     "How hard the game asks Android for CPU speed. Steady keeps the clocks up "
                             + "(fewer drops, a little warmer); Battery saves power",
@@ -1054,6 +1106,27 @@ public class LauncherActivity extends Activity {
         card.addView(official60, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
 
+        card.addView(heading("CPU STABILITY A/B - ORIGINAL VS MALI", 16),
+                matchWrap(dp(8)));
+        card.addView(text("The original Android CPU hint and the later Mali CPU "
+                + "hint use different scheduling policies. Only one is enabled. "
+                + "Neither overclocks the phone; test on the same save.",
+                12, R.color.picker_muted), matchWrap(dp(8)));
+        Button officialCpu = button("ORIGINAL CPU HINT / 20 MS", true);
+        officialCpu.setOnClickListener(v -> {
+            chooseG925CpuPolicy(true);
+            toast("Original Android CPU mode selected. Save changes and Play.");
+        });
+        card.addView(officialCpu, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        Button maliCpu = button("MALI CPU HINT / 20 MS", false);
+        maliCpu.setOnClickListener(v -> {
+            chooseG925CpuPolicy(false);
+            toast("Mali CPU mode selected. Save changes and Play.");
+        });
+        card.addView(maliCpu, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+
         Button reset = button("RESET TO DEFAULT", false);
         reset.setOnClickListener(v -> {
             for (int i = 0; i < mGraphicsSpinners.length; ++i) {
@@ -1088,6 +1161,10 @@ public class LauncherActivity extends Activity {
             case "Draw distance":
             case "Population density":
             case "Run-ahead frames":
+            case "Original Android CPU hint":
+            case "Original CPU target":
+            case "Mali CPU hint":
+            case "Frame pacing diagnostic":
             case "CPU boost":
             case "Heat guard":
             case "Thread waiting":

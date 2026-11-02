@@ -1,6 +1,7 @@
 #include "android/android_performance_hint.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -45,8 +46,11 @@ constexpr size_t kMaxHintThreads = 6;
 // CPU ticks (100 per second) a thread needs in one second to count as busy.
 constexpr uint64_t kBusyTicks = 10;
 
+// Fixed-capacity recorder: the previous vector swapped every 100 ms,
+// causing a new heap allocation on the next frame of the game thread.
 std::mutex g_frames_mutex;
-std::vector<int64_t> g_frame_durations;  // filled by NoteTitleFrame
+std::array<int64_t, 256> g_frame_durations{};
+size_t g_frame_count = 0;
 int64_t g_last_frame_ns = 0;
 
 int64_t NowNs() {
@@ -116,7 +120,9 @@ class BusyThreads {
         }
         ticks[tid] = utime + stime;
         const auto last = last_ticks_.find(tid);
-        if (last != last_ticks_.end() && utime + stime - last->second >= kBusyTicks) {
+        // Reused Linux TIDs can have lower CPU counters; avoid unsigned underflow.
+        if (last != last_ticks_.end() && utime + stime >= last->second &&
+            utime + stime - last->second >= kBusyTicks) {
           busy.emplace_back(utime + stime - last->second, tid);
         }
       }
@@ -162,12 +168,19 @@ void Log(const char* message, size_t count) {
 }  // namespace
 
 void NoteTitleFrame() noexcept {
+  // Recreate the official Android CPU-hint mode without allocating samples
+  // for the separate, disabled Mali hint system.
+  if (!REXCVAR_GET(android_performance_hint)) return;
   const int64_t now = NowNs();
   std::lock_guard lock(g_frames_mutex);
-  if (g_last_frame_ns != 0) {
-    // Clamp pauses and loading stalls so one long gap does not dominate.
-    g_frame_durations.push_back(std::min<int64_t>(now - g_last_frame_ns, kMaxFrameNs));
-    if (g_frame_durations.size() > 256) g_frame_durations.erase(g_frame_durations.begin());
+  if (g_last_frame_ns != 0 && now > g_last_frame_ns) {
+    const int64_t duration = std::min<int64_t>(now - g_last_frame_ns, kMaxFrameNs);
+    if (g_frame_count < g_frame_durations.size()) {
+      g_frame_durations[g_frame_count++] = duration;
+    } else {
+      // Drop only surplus samples if the reporter falls far behind.
+      g_frame_durations.back() = duration;
+    }
   }
   g_last_frame_ns = now;
 }
@@ -244,15 +257,18 @@ void StartPerformanceHint() {
         session_target = TargetFrameNs();
         api.update_target(session, session_target);
       }
-      // Report the frames finished since the last pass.
-      std::vector<int64_t> durations;
+      // No vector swap/heap churn in this 100 ms report cycle.
+      std::array<int64_t, 256> durations;
+      size_t duration_count = 0;
       {
         std::lock_guard lock(g_frames_mutex);
-        durations.swap(g_frame_durations);
+        duration_count = g_frame_count;
+        std::copy_n(g_frame_durations.begin(), duration_count, durations.begin());
+        g_frame_count = 0;
       }
       if (session) {
-        for (int64_t duration : durations) {
-          if (duration > 0) api.report(session, duration);
+        for (size_t i = 0; i < duration_count; ++i) {
+          if (durations[i] > 0) api.report(session, durations[i]);
         }
       }
     }
