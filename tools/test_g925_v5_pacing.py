@@ -23,7 +23,7 @@ assert "G925 STUTTER FALLBACK / RA0" in java
 assert "initializeG925V5Pacing();" in java
 start = java.index("private static final String[][] G925_STANDARD_60_PROFILE")
 end = java.index("private static final String[][] G925_SAFE_PACING_PROFILE", start)
-profile = dict(re.findall(r'\\{"([^"]+)", "([^"]+)"\\}', java[start:end]))
+profile = dict(re.findall(r'\{"([^"]+)", "([^"]+)"\}', java[start:end]))
 assert profile["gta4_extra_frames_in_flight"] == "4", profile
 assert profile["vulkan_prefer_present_mode_fifo"] == "true", profile
 assert profile["gta4_frame_limit"] == "60", profile
