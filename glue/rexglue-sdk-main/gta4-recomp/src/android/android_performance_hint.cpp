@@ -33,6 +33,13 @@ REXCVAR_DEFINE_UINT32(android_performance_hint_target_ms, 25, "GTA IV/Performanc
                       "and recovering (steadier, a little warmer); 33 = the old behaviour")
     .range(10, 50);
 
+// Legacy Mali fork delivered these updates in 100ms bursts. The optional
+// lower cadence improves governor response at the cost of worker wakeups.
+REXCVAR_DEFINE_UINT32(android_performance_hint_report_interval_ms, 25, "GTA IV/Performance",
+                      "CPU work feedback frequency (25ms responsive, 100ms old behavior); "
+                      "Android remains in charge of clocks and thread scheduling")
+    .range(16, 100);
+
 namespace gta4::android {
 namespace {
 
@@ -116,7 +123,8 @@ class BusyThreads {
         }
         ticks[tid] = utime + stime;
         const auto last = last_ticks_.find(tid);
-        if (last != last_ticks_.end() && utime + stime - last->second >= kBusyTicks) {
+        if (last != last_ticks_.end() && utime + stime >= last->second &&
+            utime + stime - last->second >= kBusyTicks) {
           busy.emplace_back(utime + stime - last->second, tid);
         }
       }
@@ -189,9 +197,12 @@ void StartPerformanceHint() {
     std::vector<pid_t> threads;
     void* session = nullptr;
     int64_t session_target = 0;
-    int tick = 0;
+    bool sampled_baseline = false;
+    auto last_thread_scan = std::chrono::steady_clock::now();
     for (;;) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      const uint32_t interval = std::clamp<uint32_t>(
+          REXCVAR_GET(android_performance_hint_report_interval_ms), 16, 100);
+      std::this_thread::sleep_for(std::chrono::milliseconds(interval));
       if (!REXCVAR_GET(android_performance_hint)) {
         if (session) {
           api.close(session);
@@ -199,10 +210,25 @@ void StartPerformanceHint() {
           threads.clear();
           Log("turned off", 0);
         }
+        sampled_baseline = false;
+        // Avoid a 256-entry vector shifting on every title frame when ADPF
+        // is disabled. No frame durations should accumulate in that mode.
+        {
+          std::lock_guard lock(g_frames_mutex);
+          g_frame_durations.clear();
+          g_last_frame_ns = 0;
+        }
         continue;
       }
-      // Once a second: follow the busiest threads.
-      if (++tick % 10 == 0) {
+      const auto scan_now = std::chrono::steady_clock::now();
+      if (!sampled_baseline) {
+        busy.Sample(self);  // Establish initial CPU tick baseline.
+        sampled_baseline = true;
+        last_thread_scan = scan_now;
+      }
+      // Scan active threads once a second, independent of report interval.
+      if (scan_now - last_thread_scan >= std::chrono::seconds(1)) {
+        last_thread_scan = scan_now;
         std::vector<pid_t> hot = busy.Sample(self);
         // Keep every thread that was busy before and is still alive, so a
         // briefly idle main thread is not dropped; add the new busy ones.
@@ -240,9 +266,11 @@ void StartPerformanceHint() {
         }
       }
       // Follow a changed target (live tuning) without recreating the session.
-      if (session && api.update_target && TargetFrameNs() != session_target) {
-        session_target = TargetFrameNs();
-        api.update_target(session, session_target);
+      if (session && api.update_target) {
+        const int64_t target = TargetFrameNs();
+        if (target != session_target && api.update_target(session, target) == 0) {
+          session_target = target;
+        }
       }
       // Report the frames finished since the last pass.
       std::vector<int64_t> durations;

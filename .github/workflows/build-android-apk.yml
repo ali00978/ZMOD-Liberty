@@ -10,7 +10,7 @@ name: Android APK
 
 on:
   push:
-    branches: [feature/g925-official-clean-core]
+    branches: [feature/g925-native-frametime-v2]
     # Changes that cannot affect the APK do not start a build: documentation,
     # images for the README, and the other workflows.
     paths-ignore:
@@ -52,7 +52,7 @@ concurrency:
 
 jobs:
   apk:
-    if: ${{ (github.event_name == 'push' && github.ref != 'refs/heads/feature/g925-official-clean-core') || (github.event_name == 'workflow_dispatch' && inputs.build_mode != 'java-only') }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.build_mode != 'java-only') }}
     name: APK (${{ inputs.gpu || 'mali' }}, ${{ inputs.cpu || 'armv9' }})
     runs-on: windows-2022
     timeout-minutes: 360
@@ -86,6 +86,7 @@ jobs:
         run: |
           python tools/test_g925_fast_apk.py
           python tools/test_g925_official_clean.py
+          python tools/test_g925_native_frametime_v2.py
 
       - name: Install CMake and Ninja
         run: python -m pip install 'cmake>=3.29,<5' ninja
@@ -186,7 +187,7 @@ jobs:
           retention-days: 30
 
   fast-apk:
-    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_mode == 'java-only') || (github.event_name == 'push' && github.ref == 'refs/heads/feature/g925-official-clean-core') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'java-only' }}
     name: Fast APK (reuse verified Mali ARMv9 native libraries)
     runs-on: windows-2022
     timeout-minutes: 90
@@ -218,6 +219,7 @@ jobs:
         run: |
           python tools/test_g925_fast_apk.py
           python tools/test_g925_official_clean.py
+          python tools/test_g925_native_frametime_v2.py
 
       - name: Verify previous APK matches native sources in this commit
         env:

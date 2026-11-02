@@ -15,6 +15,7 @@
 #include <android/log.h>
 
 #include "android/android_performance_hint.h"
+#include "android/g925_frame_health.h"
 
 #include <atomic>
 
@@ -37,36 +38,57 @@ REXCVAR_DEFINE_UINT32(gta4_extra_frames_in_flight, 0, "GTA IV/Performance",
 
 // Latest game update rate, shown by the in-game "Show FPS" overlay.
 std::atomic<float> g_liberty_title_fps{0.0f};
+std::atomic<float> g_liberty_title_p95_ms{0.0f};
+std::atomic<float> g_liberty_title_max_gap_ms{0.0f};
 
 extern "C" void sub_82A46D70(PPCContext& ctx, uint8_t* base) {
   const uint32_t out = ctx.r4.u32;
   __imp__sub_82A46D70(ctx, base);
   uint32_t pending = REX_LOAD_U32(out + 8);
   if (pending >= 0x80000000u) return;
-  // Title frame rate: how often the game submits a new frame (world update),
-  // as opposed to how often frames are presented. Logged every 2 seconds.
+  // The overlay now displays ACTUAL title submission intervals. We do not
+  // infer render/present frame times from average game FPS.
   {
     static uint32_t last_submitted = 0;
     static uint32_t submitted_count = 0;
     static timespec window_start{};
+    static gta4::android::G925FrameHealthWindow health;
+    timespec now{};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    const uint64_t now_ns = uint64_t(now.tv_sec) * 1'000'000'000ULL +
+                            uint64_t(now.tv_nsec);
+    health.ObservePoll(pending);
     const uint32_t submitted = REX_LOAD_U32(out + 4);
     if (submitted != last_submitted) {
       last_submitted = submitted;
       ++submitted_count;
+      health.ObserveTitleFrame(now_ns);
       gta4::android::NoteTitleFrame();
     }
-    timespec now{};
-    clock_gettime(CLOCK_MONOTONIC, &now);
     if (window_start.tv_sec == 0) window_start = now;
     const double elapsed = double(now.tv_sec - window_start.tv_sec) +
                            double(now.tv_nsec - window_start.tv_nsec) / 1e9;
     if (elapsed >= 0.5) {
-      g_liberty_title_fps.store(float(submitted_count / elapsed), std::memory_order_relaxed);
+      g_liberty_title_fps.store(float(submitted_count / elapsed),
+                                 std::memory_order_relaxed);
     }
-    if (elapsed >= 2.0) {
+    if (elapsed >= 5.0) {
+      const auto metrics = health.Take();
+      const float fps = float(submitted_count / elapsed);
+      const float max_gap_ms = float(metrics.maximum_gap_ns / 1.0e6);
+      g_liberty_title_fps.store(fps, std::memory_order_relaxed);
+      g_liberty_title_p95_ms.store(float(metrics.p95_upper_ms),
+                                   std::memory_order_relaxed);
+      g_liberty_title_max_gap_ms.store(max_gap_ms, std::memory_order_relaxed);
+      // Five-second log cadence, no extra GPU queries or Vulkan sync.
       __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp",
-                          "title-fps: %.1f (game frames submitted per second)",
-                          submitted_count / elapsed);
+          "title-fps: %.1f title-p95-ms-bucket: %u (251=>250) "
+          "title-max-gap-ms: %.1f gaps>33ms: %u gaps>50ms: %u gaps>100ms: %u "
+          "blocked-title-polls: %u/%u max-render-pending: %u "
+          "(game updates, NOT displayed frames)",
+          fps, metrics.p95_upper_ms, max_gap_ms, metrics.over_33ms,
+          metrics.over_50ms, metrics.over_100ms, metrics.blocked_polls,
+          metrics.total_polls, metrics.max_pending);
       submitted_count = 0;
       window_start = now;
     }

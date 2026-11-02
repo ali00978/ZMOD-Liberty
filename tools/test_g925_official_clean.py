@@ -10,8 +10,8 @@ gradle = (root / "os/android/app/build.gradle.kts").read_text()
 native = (root / "glue/rexglue-sdk-main/src/graphics/gta4_native/native_frame_scheduling.h").read_text()
 args = (root / "os/android/app/src/main/assets/default_args.txt").read_text()
 workflow = (root / ".github/workflows/build-android-apk.yml").read_text()
-assert "versionCode   = 27" in gradle
-assert "-alpha-1.9-g925-official-clean" in gradle
+assert "versionCode   = 28" in gradle
+assert "-alpha-2.0-g925-native-frametimes" in gradle
 assert "OFFICIAL MALI / CLEAN PERFORMANCE BASELINE" in java
 assert "CLEAN ORIGINAL SETTINGS + 60 FPS" in java
 assert "ORIGINAL GRAPHICS / STEADY 40 FPS" in java
@@ -34,6 +34,6 @@ assert "kNativeBufferCacheRetentionFrames = 600;" in native
 assert "kNativeBufferCacheLimitMiB = 256;" in native
 assert "--gta4_native_max_queued_frames=3" in args
 assert "41363883009" in workflow
-assert "feature/g925-official-clean-core" in workflow
+assert "feature/g925-native-frametime-v2" in workflow
 assert 'applyG925Preset(new String[][]' not in java
 print("PASS: original Mali renderer, no G925 engine hacks, safe complete settings reset and 40/60 A-B")

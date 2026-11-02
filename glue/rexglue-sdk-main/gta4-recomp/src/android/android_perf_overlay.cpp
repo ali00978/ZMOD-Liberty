@@ -31,6 +31,8 @@ REXCVAR_DEFINE_BOOL(gta4_overlay_temperature, false, "GTA IV/Overlay",
 
 // Measured in the title's frame-wait hook (android_frame_wait_hook.cpp).
 extern std::atomic<float> g_liberty_title_fps;
+extern std::atomic<float> g_liberty_title_p95_ms;
+extern std::atomic<float> g_liberty_title_max_gap_ms;
 
 namespace gta4::android {
 namespace {
@@ -195,8 +197,12 @@ void DrawPerfOverlay(ImDrawList* draw, ImFont* font, float width, float height) 
   const ImU32 white = IM_COL32(235, 235, 235, 255);
   if (REXCVAR_GET(gta4_overlay_fps)) add(fps_color, "FPS  %.0f", fps);
   if (REXCVAR_GET(gta4_overlay_frametime)) {
-    if (fps > 0.5f) add(white, "MS   %.1f", 1000.0f / fps);
-    else add(white, "%s", "MS   --");
+    // A mean FPS reciprocal is not a measured frame interval.
+    const float p95_ms = g_liberty_title_p95_ms.load(std::memory_order_relaxed);
+    const float max_ms = g_liberty_title_max_gap_ms.load(std::memory_order_relaxed);
+    if (p95_ms > 0.0f) add(white, "TITLE P95  %.0fms", p95_ms);
+    else add(white, "%s", "TITLE P95  --");
+    if (max_ms > 0.0f) add(white, "MAX GAP  %.0fms", max_ms);
   }
   if (REXCVAR_GET(gta4_overlay_cpu)) {
     if (g_sample.cpu_percent >= 0 && g_sample.cpu_mhz > 0)

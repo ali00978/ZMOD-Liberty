@@ -905,6 +905,13 @@ public class LauncherActivity extends Activity {
                     new String[] {"android_performance_hint_target_ms"},
                     new String[] {"Default", "Maximum", "Steady", "Balanced", "Battery"},
                     new String[] {"20", "25", "30", "33"}),
+            new GraphicsSetting("CPU response pacing",
+                    "How often Android receives frame durations. Compare 25ms responsive "
+                            + "against the original 100ms CPU governor feedback.",
+                    new String[] {"android_performance_hint_report_interval_ms"},
+                    new String[] {"Default (25ms)", "Fast (16ms)", "Balanced (33ms)",
+                            "Original (100ms)"},
+                    new String[] {"16", "33", "100"}),
             new GraphicsSetting("64-bit shader fallback",
                     "Used automatically on GPUs without shaderInt64. Force it on to test it on "
                             + "a GPU that has it: the game should look and run the same",
@@ -1089,6 +1096,7 @@ public class LauncherActivity extends Activity {
             case "Population density":
             case "Run-ahead frames":
             case "CPU boost":
+            case "CPU response pacing":
             case "Heat guard":
             case "Thread waiting":
                 return 1;
