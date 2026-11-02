@@ -4,9 +4,9 @@ name: Android APK
 # in os/android/scripts were written and tested on (Git Bash + the NDK).
 # Download the result from the run's "Artifacts" section.
 #
-# Starts on pushes to the Mali base or the G925 Graphics Lab branch (except pushes that
-# only change documentation), or by hand from the Actions tab. The native build is very large: the first run takes hours,
-# and later runs are faster because the build folder is cached.
+# Full builds still compile the whole engine when native sources change.
+# Manual java-only mode reuses verified native libraries from a previous successful
+# APK of THIS repository, but refuses to run if native sources differ.
 
 on:
   push:
@@ -32,9 +32,19 @@ on:
         type: choice
         options: [compatible, armv9]
         default: armv9
+      build_mode:
+        description: 'Full: native engine compile. java-only: reuse native code from compatible completed APK'
+        type: choice
+        options: [full, java-only]
+        default: full
+      base_run_id:
+        description: 'Required for java-only: successful Android APK GitHub Actions run number (numeric ID)'
+        type: string
+        default: ''
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: android-apk-${{ github.ref }}
@@ -42,6 +52,7 @@ concurrency:
 
 jobs:
   apk:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_mode != 'java-only' }}
     name: APK (${{ inputs.gpu || 'mali' }}, ${{ inputs.cpu || 'armv9' }})
     runs-on: windows-2022
     timeout-minutes: 360
@@ -75,6 +86,7 @@ jobs:
           python tools/test_g925_cpu_hint.py
           python tools/test_g925_cache_policy.py
           python tools/test_g925_native_max_v3.py
+          python tools/test_g925_fast_apk.py
 
       - name: Install CMake and Ninja
         run: python -m pip install 'cmake>=3.29,<5' ninja
@@ -131,6 +143,104 @@ jobs:
           key: android-${{ env.LIBERTY_GPU }}-${{ env.LIBERTY_CPU }}-${{ github.sha }}
 
       - name: Package the APK
+        run: |
+          export ANDROID_HOME="$(cygpath -u "$ANDROID_HOME")"
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          rm -f os/android/app/build/outputs/apk/debug/app-debug.apk
+          bash os/android/scripts/build_apk.sh debug
+
+      - name: Name the APK
+        run: |
+          VERSION="$(grep -o 'versionName *= *"[^"]*"' os/android/app/build.gradle.kts | head -1 | sed 's/.*"\(.*\)"/\1/')"
+          [ "$LIBERTY_GPU" = "mali" ] && VERSION="$VERSION-mali"
+          SUFFIX="$(grep -o 'versionSuffix *= *"[^"]*"' os/android/app/build.gradle.kts | head -1 | sed 's/.*"\(.*\)"/\1/')"
+          VERSION="$VERSION$SUFFIX"
+          [ "$LIBERTY_CPU" = "armv9" ] && VERSION="$VERSION-armv9"
+          cp os/android/app/build/outputs/apk/debug/app-debug.apk "LibertyRecompAndroid-$VERSION.apk"
+          echo "APK_NAME=LibertyRecompAndroid-$VERSION.apk" >> "$GITHUB_ENV"
+          ls -la LibertyRecompAndroid-*.apk
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APK_NAME }}
+          path: ${{ env.APK_NAME }}
+          if-no-files-found: error
+          retention-days: 30
+
+  fast-apk:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'java-only' }}
+    name: Fast APK (reuse verified Mali ARMv9 native libraries)
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      LIBERTY_GPU: ${{ inputs.gpu || 'mali' }}
+      LIBERTY_CPU: ${{ inputs.cpu || 'armv9' }}
+      G925_BASE_RUN_ID: ${{ inputs.base_run_id }}
+      NDK_VER: 29.0.14206865
+      STRIP: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Allow long paths
+        run: git config --system core.longpaths true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check fast-mode implementation and launcher configuration
+        run: |
+          python tools/test_g925_fast_apk.py
+          python tools/test_g925_graphics_lab.py
+          python tools/test_g925_cpu_hint.py
+          python tools/test_g925_cache_policy.py
+          python tools/test_g925_native_max_v3.py
+
+      - name: Verify previous APK matches native sources in this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/validate_g925_fast_apk.py
+
+      - name: Download verified previous native APK
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.base_run_id }}
+          pattern: LibertyRecompAndroid-*
+          merge-multiple: true
+          path: out/fast-apk
+          github-token: ${{ github.token }}
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK packaging dependencies
+        run: |
+          SDKMANAGER="$(cygpath -u "$ANDROID_HOME")/cmdline-tools/latest/bin/sdkmanager.bat"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Prepare pinned SDL Java dependency sources
+        run: python tools/setup_repo.py
+
+      - name: Restore native libraries and title assets from compatible APK
+        run: |
+          python tools/stage_g925_apk_native.py \
+            --artifact-directory out/fast-apk \
+            --app-directory os/android
+
+      - name: Package Java-only changes into a new APK
         run: |
           export ANDROID_HOME="$(cygpath -u "$ANDROID_HOME")"
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
