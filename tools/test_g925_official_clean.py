@@ -34,6 +34,6 @@ assert "kNativeBufferCacheRetentionFrames = 600;" in native
 assert "kNativeBufferCacheLimitMiB = 256;" in native
 assert "--gta4_native_max_queued_frames=3" in args
 assert "41363883009" in workflow
-assert "feature/g925-official-clean-core" in workflow
+assert "feature/g925-native-smooth-lab" in workflow
 assert 'applyG925Preset(new String[][]' not in java
 print("PASS: original Mali renderer, no G925 engine hacks, safe complete settings reset and 40/60 A-B")
