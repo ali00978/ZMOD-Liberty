@@ -67,8 +67,8 @@ assert "GRAPHICS_FILE" in activity
 assert "withoutDuplicateOptions(arguments)" in activity
 
 # Experimental native-max APK is versioned above previous lab and perf v2.
-assert "versionCode   = 22" in gradle
-assert '-alpha-1.5-g925-native-max3' in gradle
+assert "versionCode   = 23" in gradle
+assert '-alpha-1.5-g925-v4-diagnostics' in gradle
 assert "feature/g925-native-max-v3" in workflow
 
 print(f"PASS: G925 native screen-resolution defaults, {len(values)} mapped controls, backup and rollback")
