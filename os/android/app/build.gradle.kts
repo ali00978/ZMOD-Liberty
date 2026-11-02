@@ -53,12 +53,12 @@ android {
         // 28: ASharedMemory (26) for guest memory and AAudio (27) for audio.
         minSdk        = 29
         targetSdk     = 35
-        // G925 Native Max v3: higher than Performance v2 (21).
+        // G925 v4 diagnostic APK: above Native Max v3 (22), same native binaries.
         // Back up saves before installing and check the APK signature matches.
-        versionCode   = 22
+        versionCode   = 23
         // Shown as e.g. 0.5.9.3-mali-alpha-1.5. The workflow reads both the
         // base version and versionSuffix to name the APK.
-        val versionSuffix = "-alpha-1.5-g925-native-max3"
+        val versionSuffix = "-alpha-1.5-g925-v4-diagnostics"
         versionName   = "0.5.9.3" + (if (libertyGpu == "mali") "-mali" else "") + versionSuffix
 
         // Read by DriverBridge.defaultMode(): the driver used when driver.txt
