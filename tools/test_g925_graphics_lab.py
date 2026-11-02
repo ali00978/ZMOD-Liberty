@@ -12,7 +12,7 @@ runtime = (ROOT / "os/android/app/src/main/java/com/libertyrecomp/LibertyActivit
 
 assert launcher.count("G925 GRAPHICS LAB v1") == 1  # v1 option definitions retained
 assert launcher.count("G925 GRAPHICS LAB v2") == 1
-assert launcher.count("applyG925Preset(new String[][]") == 5
+assert launcher.count("applyG925Preset(new String[][]") == 6
 assert launcher.count("private void applyG925Preset(") == 1
 assert launcher.count("Button g925Preset") == 3
 assert "G925 HIGH SMOOTH - RECOMMENDED" in launcher
