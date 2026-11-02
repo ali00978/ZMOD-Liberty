@@ -10,7 +10,7 @@ name: Android APK
 
 on:
   push:
-    branches: [mali-dimensity-8400, feature/g925-graphics-lab, feature/g925-performance-v2]
+    branches: [mali-dimensity-8400, feature/g925-graphics-lab, feature/g925-performance-v2, feature/g925-native-max-v3]
     # Changes that cannot affect the APK do not start a build: documentation,
     # images for the README, and the other workflows.
     paths-ignore:
@@ -69,11 +69,12 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Validate G925 v2 graphics, CPU hint and cache policy
+      - name: Validate G925 v3 native max defaults, CPU hint and cache safety
         run: |
           python tools/test_g925_graphics_lab.py
           python tools/test_g925_cpu_hint.py
           python tools/test_g925_cache_policy.py
+          python tools/test_g925_native_max_v3.py
 
       - name: Install CMake and Ninja
         run: python -m pip install 'cmake>=3.29,<5' ninja
