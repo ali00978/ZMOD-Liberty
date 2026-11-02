@@ -1,4 +1,5 @@
 #include "android/android_performance_hint.h"
+#include "android/g925_hint_thread_policy.h"
 
 #include <algorithm>
 #include <array>
@@ -40,6 +41,9 @@ REXCVAR_DEFINE_UINT32(android_performance_hint_report_interval_ms, 25, "GTA IV/P
                       "CPU work feedback frequency (25ms responsive, 100ms old behavior); "
                       "Android remains in charge of clocks and thread scheduling")
     .range(16, 100);
+REXCVAR_DEFINE_BOOL(android_performance_hint_stable_threads, true, "GTA IV/Performance",
+                    "Keep important game/recorder threads in the hint session over "
+                    "brief idle periods rather than switching at every 1s sample");
 
 namespace gta4::android {
 namespace {
@@ -108,6 +112,7 @@ class BusyThreads {
   std::vector<pid_t> Sample(pid_t exclude) {
     std::unordered_map<pid_t, uint64_t> ticks;
     std::vector<std::pair<uint64_t, pid_t>> busy;
+    std::vector<std::pair<uint64_t, pid_t>> critical;
     if (DIR* tasks = opendir("/proc/self/task")) {
       while (const dirent* entry = readdir(tasks)) {
         if (!std::isdigit(static_cast<unsigned char>(entry->d_name[0]))) continue;
@@ -127,16 +132,31 @@ class BusyThreads {
         }
         ticks[tid] = utime + stime;
         const auto last = last_ticks_.find(tid);
-        if (last != last_ticks_.end() && utime + stime >= last->second &&
-            utime + stime - last->second >= kBusyTicks) {
-          busy.emplace_back(utime + stime - last->second, tid);
+        const uint64_t delta = last != last_ticks_.end() &&
+                               utime + stime >= last->second
+            ? utime + stime - last->second : 0;
+        // Already loaded /proc stat contains truncated Linux thread names.
+        // Protect frame-critical roles even when renderer waits hide CPU use.
+        const size_t begin = stat.find('(');
+        const std::string name = begin < name_end
+            ? stat.substr(begin + 1, name_end - begin - 1) : std::string{};
+        if (name.rfind("Main XThread", 0) == 0 ||
+            name.rfind("GtaRecorder", 0) == 0) {
+          critical.emplace_back(delta, tid);
+        } else if (delta >= kBusyTicks) {
+          busy.emplace_back(delta, tid);
         }
       }
       closedir(tasks);
     }
     last_ticks_ = std::move(ticks);
+    std::sort(critical.begin(), critical.end(), std::greater<>());
     std::sort(busy.begin(), busy.end(), std::greater<>());
     std::vector<pid_t> result;
+    for (const auto& [delta, tid] : critical) {
+      if (result.size() == kMaxHintThreads) break;
+      result.push_back(tid);
+    }
     for (const auto& [delta, tid] : busy) {
       if (result.size() == kMaxHintThreads) break;
       result.push_back(tid);
@@ -204,6 +224,8 @@ void StartPerformanceHint() {
     }
     const pid_t self = pid_t(gettid());
     BusyThreads busy;
+    G925StableHintThreads<pid_t> stable_threads{kMaxHintThreads};
+    bool was_stable = REXCVAR_GET(android_performance_hint_stable_threads);
     std::vector<pid_t> threads;
     void* session = nullptr;
     int64_t session_target = 0;
@@ -221,6 +243,8 @@ void StartPerformanceHint() {
           Log("turned off", 0);
         }
         sampled_baseline = false;
+        stable_threads.Reset();
+        threads.clear();
         // Avoid a 256-entry vector shifting on every title frame when ADPF
         // is disabled. No frame durations should accumulate in that mode.
         {
@@ -240,25 +264,24 @@ void StartPerformanceHint() {
       if (scan_now - last_thread_scan >= std::chrono::seconds(1)) {
         last_thread_scan = scan_now;
         std::vector<pid_t> hot = busy.Sample(self);
-        // Keep every thread that was busy before and is still alive, so a
-        // briefly idle main thread is not dropped; add the new busy ones.
-        if (!hot.empty()) {
-          std::vector<pid_t> merged = hot;
-          for (pid_t tid : threads) {
-            if (merged.size() >= kMaxHintThreads) break;
-            if (std::find(merged.begin(), merged.end(), tid) == merged.end() &&
-                access(("/proc/self/task/" + std::to_string(tid)).c_str(), F_OK) == 0) {
-              merged.push_back(tid);
-            }
-          }
-          std::sort(merged.begin(), merged.end());
-          hot = merged;
+        // The 2.1 G925 report shows near-constant six-thread swaps.
+        // Hysteresis keeps living frame-critical threads across two misses.
+        const bool steady = REXCVAR_GET(android_performance_hint_stable_threads);
+        if (steady != was_stable) {
+          stable_threads.Reset();
+          was_stable = steady;
+        }
+        if (steady) {
+          const auto& selected = stable_threads.Select(hot, [](pid_t tid) {
+            return access(("/proc/self/task/" + std::to_string(tid)).c_str(), F_OK) == 0;
+          });
+          hot.assign(selected.begin(), selected.end());
         }
         if (!hot.empty() && hot != threads) {
           if (session && api.set_threads &&
               api.set_threads(session, hot.data(), hot.size()) == 0) {
             threads = hot;
-            LogThreads("now boosting", threads);
+            LogThreads(steady ? "stable threads updated" : "now boosting", threads);
           } else {
             if (session) api.close(session);
             session = api.create_session(manager, reinterpret_cast<const int32_t*>(hot.data()),
@@ -268,7 +291,7 @@ void StartPerformanceHint() {
             if (session) {
               // Android 15+: ask for performance over power efficiency.
               if (api.prefer_power) api.prefer_power(session, false);
-              LogThreads("session started,", threads);
+              LogThreads(steady ? "stable threads started," : "session started,", threads);
             } else {
               Log("could not create a session", hot.size());
             }

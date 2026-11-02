@@ -30,9 +30,9 @@ assert 'readG925StutterReport()' in java
 assert 'line.contains("title-fps:")' in java
 assert 'line.contains("performance-hint:")' in java
 assert 'new Intent(Intent.ACTION_SEND)' in java
-assert 'recent.size() > 150' in java
+assert 'recent.size() > 240' in java
 assert 'play for 2 minutes' in java
 assert 'kNativeTextureEvictionGraceFrames = 240;' in old
-assert 'branches: [feature/g925-native-pipeline-stability-v21]' in workflow
+assert 'branches: [feature/g925-sustained-fps-v22]' in workflow
 assert "github.event_name == 'push'" in workflow
 print("PASS: demanded pipeline priority, capacity rejection and stock Mali renderer preserved")

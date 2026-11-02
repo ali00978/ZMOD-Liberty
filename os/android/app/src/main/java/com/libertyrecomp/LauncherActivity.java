@@ -924,6 +924,16 @@ public class LauncherActivity extends Activity {
                     new String[] {"Default (25ms)", "Fast (16ms)", "Balanced (33ms)",
                             "Original (100ms)"},
                     new String[] {"16", "33", "100"}),
+            new GraphicsSetting("CPU hint thread stability",
+                    "Reduce rapid swapping of game-critical Android CPU hint threads.",
+                    new String[] {"android_performance_hint_stable_threads"},
+                    new String[] {"Default (stable)", "Stable", "Original (switching)"},
+                    new String[] {"true", "false"}),
+            new GraphicsSetting("Android CPU performance hints",
+                    "Test Android's own CPU governor without game-provided CPU hints.",
+                    new String[] {"android_performance_hint"},
+                    new String[] {"Default (on)", "On", "Off"},
+                    new String[] {"true", "false"}),
             new GraphicsSetting("64-bit shader fallback",
                     "Used automatically on GPUs without shaderInt64. Force it on to test it on "
                             + "a GPU that has it: the game should look and run the same",
@@ -1109,6 +1119,8 @@ public class LauncherActivity extends Activity {
             case "Run-ahead frames":
             case "CPU boost":
             case "CPU response pacing":
+            case "CPU hint thread stability":
+            case "Android CPU performance hints":
             case "Heat guard":
             case "Thread waiting":
                 return 1;
@@ -1471,7 +1483,7 @@ public class LauncherActivity extends Activity {
         if (logs == null || logs.length == 0) return null;
         Arrays.sort(logs, (a, b) -> a.getName().compareTo(b.getName()));
         File latest = logs[logs.length - 1];
-        // Last 150 relevant events are enough for a multi-minute scene test.
+        // Last 240 relevant events cover frame, ADPF, GPU, battery and heat.
         // Reading stays on a worker thread and never blocks the UI or game.
         java.util.ArrayDeque<String> recent = new java.util.ArrayDeque<>();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
@@ -1482,9 +1494,11 @@ public class LauncherActivity extends Activity {
                 // Never share a raw logcat dump, filenames or user input.
                 if (!line.contains("LibertyRecomp:")) continue;
                 if (!line.contains("title-fps:")
-                        && !line.contains("performance-hint:")) continue;
+                        && !line.contains("performance-hint:")
+                        && !line.contains("power:")
+                        && !line.contains("thermal-guard:")) continue;
                 recent.addLast(line.length() > 320 ? line.substring(0, 320) : line);
-                if (recent.size() > 150) recent.removeFirst();
+                if (recent.size() > 240) recent.removeFirst();
             }
         }
         if (recent.isEmpty()) return null;

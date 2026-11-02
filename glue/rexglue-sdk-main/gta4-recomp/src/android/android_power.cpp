@@ -118,6 +118,35 @@ float GpuTemperature() {
   return value;
 }
 
+// Read-only diagnostic nodes. MediaTek GED may be blocked on retail Android;
+// return -1 / NaN rather than claiming an invented GPU reading.
+int G925MaliGpuUtilization() {
+  static constexpr const char* nodes[] = {
+      "/sys/kernel/ged/hal/gpu_utilization",
+      "/sys/module/ged/parameters/gpu_loading",
+      "/sys/class/misc/mali0/device/utilization"};
+  for (const char* node : nodes) {
+    FILE* file = std::fopen(node, "r");
+    if (!file) continue;
+    int value = -1;
+    const bool ok = std::fscanf(file, "%d", &value) == 1;
+    std::fclose(file);
+    if (ok && value >= 0 && value <= 100) return value;
+  }
+  return -1;
+}
+float G925BatteryCelsius() {
+  FILE* file = std::fopen("/sys/class/power_supply/battery/temp", "r");
+  if (!file) return __builtin_nanf("");
+  int value = -1;
+  const bool ok = std::fscanf(file, "%d", &value) == 1;
+  std::fclose(file);
+  if (!ok) return __builtin_nanf("");
+  if (value >= 100 && value <= 1000) return float(value) / 10.0f;
+  if (value >= 10 && value <= 90) return float(value);
+  return __builtin_nanf("");
+}
+
 std::vector<pid_t> BusiestThreads(std::unordered_map<pid_t, int64_t>& previous, size_t count) {
   std::vector<std::pair<int64_t, pid_t>> usage;
   std::unordered_map<pid_t, int64_t> current;
@@ -257,10 +286,13 @@ void PowerLoop() {
       next_log = now + std::chrono::seconds(10);
       std::string ids;
       for (pid_t tid : threads) ids += (ids.empty() ? "" : ",") + std::to_string(tid);
+      const int gpu_busy = G925MaliGpuUtilization();
+      const float battery_c = G925BatteryCelsius();
       __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp",
-                          "power: headroom=%.2f gpu=%.1fC hint=%s work=%.1fms/target %.1fms "
-                          "threads=%s%s",
-                          headroom, gpu_temperature, session ? "on" : "off",
+                          "power: headroom=%.2f gpu=%.1fC gpu-util=%d%% battery=%.1fC "
+                          "hint=%s work=%.1fms/target %.1fms threads=%s%s",
+                          headroom, gpu_temperature, gpu_busy, battery_c,
+                          session ? "on" : "off",
                           reported ? reported_sum_ms / reported : 0.0, double(target_ns) / 1e6,
                           ids.c_str(), guard_saved_scale ? " guard=lowered" : "");
       reported_sum_ms = 0.0;
