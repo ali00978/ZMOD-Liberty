@@ -985,6 +985,53 @@ public class LauncherActivity extends Activity {
                 G925_NATIVE_MAX_PROFILE, "G925 Native Max"));
         card.addView(g925NativeMax, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        // Two opt-in A/B tests. Neither changes the original one-time MAX
+        // defaults, both keep native panel resolution and 16x anisotropy.
+        // "MAX 30" changes pacing only; the visual settings are identical.
+        Button g925MaxPaced = button("G925 MAX NATIVE / STEADY 30 TEST", false);
+        g925MaxPaced.setOnClickListener(v -> {
+            String[][] paced = new String[G925_NATIVE_MAX_PROFILE.length][2];
+            for (int i = 0; i < G925_NATIVE_MAX_PROFILE.length; ++i) {
+                paced[i] = G925_NATIVE_MAX_PROFILE[i].clone();
+                if (paced[i][0].equals("gta4_frame_limit")) paced[i][1] = "30";
+            }
+            applyG925Preset(paced, "G925 Max Native / Steady 30");
+        });
+        card.addView(g925MaxPaced, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
+
+        // Same full native resolution, SMAA, shadow size and maximum textures.
+        // The reflection and world-complexity reductions are intentionally
+        // VISUAL tradeoffs to isolate the cause of driving hitches, not an
+        // invisible improvement. User can restore the true MAX preset any time.
+        Button g925MaxNativeStream = button("G925 NATIVE HIGH / STUTTER TEST", false);
+        g925MaxNativeStream.setOnClickListener(v -> applyG925Preset(new String[][] {
+                {"gta4_output_height_cap", "0"},
+                {"gta4_native_upscaler", "native"},
+                {"gta4_native_anti_aliasing", "smaa"},
+                {"gta4_anisotropic_filtering", "16x"},
+                {"gta4_frame_limit", "40"},
+                {"gta4_draw_distance_scale", "1.0"},
+                {"gta4_traffic_density_scale", "0.7"},
+                {"gta4_shadow_map_base_size", "512"},
+                {"gta4_reflection_resolution", "original"},
+                {"gta4_reflection_capture_distance", "near"},
+                {"gta4_reflection_aa", "off"},
+                {"gta4_dynamic_draw_distance", "false"},
+                {"gta4_fps_guard", "2"},
+                {"gta4_extra_frames_in_flight", "0"},
+                {"android_performance_hint_target_ms", "20"},
+                {"android_thermal_guard", "false"},
+                {"gta4_motion_blur", "false"}
+        }, "G925 Native High / Stutter Test"));
+        card.addView(g925MaxNativeStream, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        card.addView(text("Tests keep native resolution, 16x textures, SMAA and high "
+                + "shadows. Steady 30 changes only the frame cap. Stutter Test "
+                + "reduces reflections, draw distance and population to isolate "
+                + "costs. Neither is auto-selected; save changes and restart Play.",
+                11, R.color.picker_muted), matchWrap(dp(8)));
+
         Button restoreG925Previous = button("RESTORE PREVIOUS GRAPHICS", false);
         restoreG925Previous.setOnClickListener(v -> restoreG925PreviousGraphics());
         card.addView(restoreG925Previous, new LinearLayout.LayoutParams(
