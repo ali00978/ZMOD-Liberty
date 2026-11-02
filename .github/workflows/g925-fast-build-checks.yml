@@ -1,0 +1,53 @@
+name: G925 Fast Build Checks
+
+# Quick checks only; NEVER compiles the native engine. The full APK
+# workflow deliberately does not subscribe to this development branch.
+on:
+  push:
+    branches:
+      - feature/g925-fast-build-workflow
+    paths:
+      - 'tools/validate_g925_fast_apk.py'
+      - 'tools/stage_g925_apk_native.py'
+      - 'tools/test_g925_fast_apk.py'
+      - 'os/android/scripts/build_native.sh'
+      - '.github/workflows/build-android-apk.yml'
+      - '.github/workflows/g925-fast-build-checks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test fast-mode source validation and APK extraction
+        run: python tools/test_g925_fast_apk.py
+      - name: Check build script shell syntax
+        run: bash -n os/android/scripts/build_native.sh
+      - name: Check workflow YAML and mode selection
+        run: |
+          python -m pip -q install PyYAML
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          root = Path(".github/workflows/build-android-apk.yml")
+          data = yaml.safe_load(root.read_text())
+          assert 'apk' in data['jobs'], 'full build job missing'
+          assert 'fast-apk' in data['jobs'], 'fast mode missing'
+          assert 'sccache-action@v0.0.11' in root.read_text()
+          assert 'tools/validate_g925_fast_apk.py' in root.read_text()
+          assert 'tools/stage_g925_apk_native.py' in root.read_text()
+          assert "github.event_name != 'workflow_dispatch'" in root.read_text()
+          assert "github.event_name == 'workflow_dispatch'" in root.read_text()
+          print('PASS: workflow has full and guarded Java-only modes')
+          PY
