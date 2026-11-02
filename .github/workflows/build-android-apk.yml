@@ -10,7 +10,7 @@ name: Android APK
 
 on:
   push:
-    branches: [mali-dimensity-8400, feature/g925-graphics-lab]
+    branches: [mali-dimensity-8400, feature/g925-graphics-lab, feature/g925-performance-v2]
     # Changes that cannot affect the APK do not start a build: documentation,
     # images for the README, and the other workflows.
     paths-ignore:
@@ -69,8 +69,11 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Validate the G925 Graphics Lab presets
-        run: python tools/test_g925_graphics_lab.py
+      - name: Validate G925 v2 graphics, CPU hint and cache policy
+        run: |
+          python tools/test_g925_graphics_lab.py
+          python tools/test_g925_cpu_hint.py
+          python tools/test_g925_cache_policy.py
 
       - name: Install CMake and Ninja
         run: python -m pip install 'cmake>=3.29,<5' ninja
