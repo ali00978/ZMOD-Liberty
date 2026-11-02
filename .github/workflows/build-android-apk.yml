@@ -10,7 +10,7 @@ name: Android APK
 
 on:
   push:
-    branches: [mali-dimensity-8400, feature/g925-graphics-lab, feature/g925-performance-v2, feature/g925-native-max-v3, feature/g925-v4-stutter-diagnostics]
+    branches: [mali-dimensity-8400, feature/g925-graphics-lab, feature/g925-performance-v2, feature/g925-native-max-v3, feature/g925-v4-stutter-diagnostics, feature/g925-standard-60-fps]
     # Changes that cannot affect the APK do not start a build: documentation,
     # images for the README, and the other workflows.
     paths-ignore:
@@ -52,7 +52,7 @@ concurrency:
 
 jobs:
   apk:
-    if: ${{ (github.event_name == 'push' && github.ref != 'refs/heads/feature/g925-v4-stutter-diagnostics') || (github.event_name == 'workflow_dispatch' && inputs.build_mode != 'java-only') }}
+    if: ${{ (github.event_name == 'push' && github.ref != 'refs/heads/feature/g925-v4-stutter-diagnostics' && github.ref != 'refs/heads/feature/g925-standard-60-fps') || (github.event_name == 'workflow_dispatch' && inputs.build_mode != 'java-only') }}
     name: APK (${{ inputs.gpu || 'mali' }}, ${{ inputs.cpu || 'armv9' }})
     runs-on: windows-2022
     timeout-minutes: 360
@@ -89,6 +89,7 @@ jobs:
           python tools/test_g925_cache_policy.py
           python tools/test_g925_native_max_v3.py
           python tools/test_g925_v4_diagnostics.py
+          python tools/test_g925_standard_60.py
           python tools/test_g925_fast_apk.py
 
       - name: Install CMake and Ninja
@@ -190,7 +191,7 @@ jobs:
           retention-days: 30
 
   fast-apk:
-    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_mode == 'java-only') || (github.event_name == 'push' && github.ref == 'refs/heads/feature/g925-v4-stutter-diagnostics') }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_mode == 'java-only') || (github.event_name == 'push' && (github.ref == 'refs/heads/feature/g925-v4-stutter-diagnostics' || github.ref == 'refs/heads/feature/g925-standard-60-fps')) }}
     name: Fast APK (reuse verified Mali ARMv9 native libraries)
     runs-on: windows-2022
     timeout-minutes: 90
@@ -226,6 +227,7 @@ jobs:
           python tools/test_g925_cache_policy.py
           python tools/test_g925_native_max_v3.py
           python tools/test_g925_v4_diagnostics.py
+          python tools/test_g925_standard_60.py
 
       - name: Verify previous APK matches native sources in this commit
         env:

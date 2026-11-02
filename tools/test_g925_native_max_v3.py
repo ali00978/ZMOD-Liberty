@@ -55,8 +55,9 @@ assert "gta4_parked_car_density_scale" in setup
 assert "gta4_ped_density_scale" in setup
 assert "gta4_scenario_ped_density_scale" in setup
 assert "StandardCopyOption.REPLACE_EXISTING" in setup
-assert "initializeG925NativeMaxDefaults();" in java
-assert java.index("initializeG925NativeMaxDefaults();") < java.index("setContentView(buildLayout());")
+assert "initializeG925Standard60Defaults();" in java
+assert "initializeG925NativeMaxDefaults();" not in java
+assert java.index("initializeG925Standard60Defaults();") < java.index("setContentView(buildLayout());")
 
 # Previous settings can be restored by the user without an uninstall.
 assert "RESTORE PREVIOUS GRAPHICS" in java
@@ -67,8 +68,8 @@ assert "GRAPHICS_FILE" in activity
 assert "withoutDuplicateOptions(arguments)" in activity
 
 # Experimental native-max APK is versioned above previous lab and perf v2.
-assert "versionCode   = 23" in gradle
-assert '-alpha-1.5-g925-v4-diagnostics' in gradle
+assert "versionCode   = 24" in gradle
+assert '-alpha-1.5-g925-standard60' in gradle
 assert "feature/g925-native-max-v3" in workflow
 
 print(f"PASS: G925 native screen-resolution defaults, {len(values)} mapped controls, backup and rollback")
