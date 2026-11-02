@@ -59,7 +59,7 @@ assert "StandardCopyOption.REPLACE_EXISTING" in setup
 assert "initializeG925Standard60Defaults();" in java
 assert java.index("initializeG925Standard60Defaults();") < java.index("setContentView(buildLayout());")
 standard = java[java.index("private static final String[][] G925_STANDARD_60_PROFILE"):
-                java.index("private static final String G925_MAX_DEFAULT_MARKER")]
+                java.index("private static final String[][] G925_SAFE_PACING_PROFILE")]
 standard_values = dict(re.findall(r'\{"([^"]+)", "([^"]+)"\}', standard))
 assert standard_values == {
     "gta4_frame_limit": "60",
