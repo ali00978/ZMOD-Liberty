@@ -13,7 +13,13 @@ code = SOURCE.read_text(encoding="utf-8")
 
 assert code.count('G925 GRAPHICS LAB v1') == 2, "Expected one controls block and one UI block"
 assert code.count('Button g925Preset') == 3, "Expected exactly 3 G925 profile buttons"
-assert code.count('applyG925Preset(new String[][]') == 3
+# Three Graphics Lab presets plus one shared Stock Stable 30/60 FPS helper.
+# Only count the original lab section for the lab's own three profiles.
+lab_start = code.index('card.addView(heading("IMMORTALIS G925 GRAPHICS LAB"')
+lab_end = code.index('Button reset = button("RESET TO DEFAULT"', lab_start)
+assert code[lab_start:lab_end].count('applyG925Preset(new String[][]') == 3
+assert code.count('applyG925Preset(new String[][]') == 4
+assert 'applyG925StockPreset(String cap)' in code
 assert code.count('private void applyG925Preset(') == 1
 assert 'markSettingsChanged();' in code
 assert 'mGraphicsSpinners[i].setSelection(choice + 1, false)' in code
