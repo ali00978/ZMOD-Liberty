@@ -2626,7 +2626,17 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
     VkDeviceSize bytes=0;
     uint32_t memory_type=UINT32_MAX, memory_heap=UINT32_MAX;
   };
+  // G925 memory-lab: keep more *retired* Vulkan image allocations available for reuse.
+  // This is NOT a preallocation or a dedicated VRAM reservation. The pool retains
+  // only completed resources whose image parameters match a later allocation.
+  // Benchmark separately: a larger pool can reduce allocation churn but may
+  // worsen memory pressure on unified-memory GPUs. The pool's regular trim
+  // and device-allocation recovery paths remain unchanged.
+#if defined(__ANDROID__)
+  NativeImageReusePool<ReusableNativeImage> texture_allocation_pool_{96ULL * 1024 * 1024, 128};
+#else
   NativeImageReusePool<ReusableNativeImage> texture_allocation_pool_{33554432, 64};
+#endif
   std::unique_ptr<NativeResourceReclaimer<ReusableNativeImage>> texture_reclaimer_;
   bool image_allocation_pool_enabled_=true;
   uint64_t texture_allocation_reuses_=0;
