@@ -32,14 +32,27 @@ case "${LIBERTY_CPU:-compatible}" in
 esac
 CPU_FLAGS="$CPU_TARGET -fno-emulated-tls"
 echo "== CPU target: ${LIBERTY_CPU:-compatible} ($CPU_FLAGS)"
-# Reconfigure whenever the flags differ from the cached configuration, so a
-# new CPU target really recompiles everything instead of reusing old objects.
+# Optional sccache compiler launcher: unlike a Ninja object directory,
+# content-addressed cache entries survive a fresh checkout's new file mtimes.
+# If the GitHub cache is unavailable, sccache falls back to normal compilation.
+SCCACHE_LAUNCHER=""
+if [ -n "${SCCACHE_PATH:-}" ]; then
+  SCCACHE_LAUNCHER="$(cygpath -m "$SCCACHE_PATH")"
+fi
+CACHED_LAUNCHER=""
+if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
+  CACHED_LAUNCHER="$(sed -n 's/^CMAKE_CXX_COMPILER_LAUNCHER:[^=]*=//p' "$BUILD_DIR/CMakeCache.txt" | head -1)"
+fi
+# Reconfigure when target CPU or launcher changes; never reuse old CPU objects.
 if [ ! -f "$BUILD_DIR/build.ninja" ] || \
-   ! grep -qxF -- "CMAKE_CXX_FLAGS:STRING=$CPU_FLAGS" "$BUILD_DIR/CMakeCache.txt"; then
+   ! grep -qxF -- "CMAKE_CXX_FLAGS:STRING=$CPU_FLAGS" "$BUILD_DIR/CMakeCache.txt" || \
+   [ "$CACHED_LAUNCHER" != "$SCCACHE_LAUNCHER" ]; then
   echo "== configuring $BUILD_TYPE in $BUILD_DIR"
   cmake -S "$REPO" -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_C_FLAGS="$CPU_FLAGS" \
     -DCMAKE_CXX_FLAGS="$CPU_FLAGS" \
+    -DCMAKE_C_COMPILER_LAUNCHER="$SCCACHE_LAUNCHER" \
+    -DCMAKE_CXX_COMPILER_LAUNCHER="$SCCACHE_LAUNCHER" \
     -DCMAKE_TOOLCHAIN_FILE="$REPO/toolchains/android.cmake" \
     -DANDROID_NDK="$ANDROID_NDK" \
     -DANDROID_ABI=arm64-v8a \
