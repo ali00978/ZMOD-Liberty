@@ -63,7 +63,7 @@ standard = java[java.index("private static final String[][] G925_STANDARD_60_PRO
 standard_values = dict(re.findall(r'\{"([^"]+)", "([^"]+)"\}', standard))
 assert standard_values == {
     "gta4_frame_limit": "60",
-    "gta4_extra_frames_in_flight": "0",
+    "gta4_extra_frames_in_flight": "4",
     "android_performance_hint_target_ms": "20",
     "android_thermal_guard": "true",
 }
@@ -83,8 +83,8 @@ assert "GRAPHICS_FILE" in activity
 assert "withoutDuplicateOptions(arguments)" in activity
 
 # Experimental native-max APK is versioned above previous lab and perf v2.
-assert "versionCode   = 24" in gradle
-assert '-alpha-1.6-g925-standard60-fast' in gradle
+assert "versionCode   = 25" in gradle
+assert '-alpha-1.7-g925-queue4-experimental' in gradle
 assert "feature/g925-native-max-v3" in workflow
 
 print(f"PASS: G925 native MAX opt-in and Standard 60 default, {len(values)} mapped controls, backup and rollback")

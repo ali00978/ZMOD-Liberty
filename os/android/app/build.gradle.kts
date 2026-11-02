@@ -55,10 +55,10 @@ android {
         targetSdk     = 35
         // G925 Standard 60 fast APK: above v4 (23), same verified native binaries.
         // Back up saves before installing and check the APK signature matches.
-        versionCode   = 24
+        versionCode   = 25
         // Shown as e.g. 0.5.9.3-mali-alpha-1.5. The workflow reads both the
         // base version and versionSuffix to name the APK.
-        val versionSuffix = "-alpha-1.6-g925-standard60-fast"
+        val versionSuffix = "-alpha-1.7-g925-queue4-experimental"
         versionName   = "0.5.9.3" + (if (libertyGpu == "mali") "-mali" else "") + versionSuffix
 
         // Read by DriverBridge.defaultMode(): the driver used when driver.txt

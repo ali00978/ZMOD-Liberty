@@ -731,10 +731,10 @@ public class LauncherActivity extends Activity {
                     new String[] {"gta4_reflection_aa"},
                     new String[] {"Default", "Off", "Original"},
                     new String[] {"off", "original"}),
-            new GraphicsSetting("Run-ahead frames", "More can raise FPS but adds input delay",
+            new GraphicsSetting("Run-ahead frames", "4 is experimental: may add latency or stutter; compare with 0/2",
                     new String[] {"gta4_extra_frames_in_flight"},
-                    new String[] {"Default", "0", "1", "2"},
-                    new String[] {"0", "1", "2"}),
+                    new String[] {"Default", "0", "1", "2", "3", "4 (experimental)"},
+                    new String[] {"0", "1", "2", "3", "4"}),
             new GraphicsSetting("CPU boost",
                     "Extreme asks Android for a 16 ms CPU work target (not an overclock). "
                             + "May increase heat and throttling; compare against Maximum and Steady.",
@@ -786,7 +786,7 @@ public class LauncherActivity extends Activity {
     private static final String G925_STANDARD_PREVIOUS_GRAPHICS = "graphics.before_g925_standard60_v1.txt";
     private static final String[][] G925_STANDARD_60_PROFILE = {
             {"gta4_frame_limit", "60"},
-            {"gta4_extra_frames_in_flight", "0"},
+            {"gta4_extra_frames_in_flight", "4"},
             {"android_performance_hint_target_ms", "20"},
             {"android_thermal_guard", "true"},
     };
@@ -987,7 +987,7 @@ public class LauncherActivity extends Activity {
 
         // G925 Native Max v3. One-time defaults already applied on first launch.
         card.addView(heading("G925 STANDARD 60 - DEFAULT GRAPHICS", 18), matchWrap(dp(8)));
-        card.addView(text("Standard image quality with a 60 FPS CAP, run-ahead 0 and balanced "
+        card.addView(text("Standard image quality with a 60 FPS CAP, experimental run-ahead 4 and "
                 + "thermal handling. Actual FPS depends on game/render performance. "
                 + "ALL HIGH below is optional and may be much slower.",
                 12, R.color.picker_muted), matchWrap(dp(8)));
@@ -1181,7 +1181,7 @@ public class LauncherActivity extends Activity {
             mGraphicsSpinners[i].setSelection(0, false);
             mGraphicsPositions[i] = 0;
         }
-        applyG925Preset(G925_STANDARD_60_PROFILE, "G925 Standard graphics / 60 FPS");
+        applyG925Preset(G925_STANDARD_60_PROFILE, "G925 Standard graphics / 60 FPS / run-ahead 4");
     }
 
     /** Apply documented launcher options; do not modify GPU drivers or user saves. */

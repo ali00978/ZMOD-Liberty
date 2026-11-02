@@ -19,8 +19,8 @@ assert "RESTORE PREVIOUS GRAPHICS" in src
 assert 'if (paced[i][0].equals("gta4_frame_limit")) paced[i][1] = "30";' in src
 assert 'G925_NATIVE_MAX_PROFILE[i].clone();' in src
 assert 'G925_NATIVE_MAX_PROFILE, "G925 Native Max"' in src
-assert "versionCode   = 24" in gradle
-assert "-alpha-1.6-g925-standard60-fast" in gradle
+assert "versionCode   = 25" in gradle
+assert "-alpha-1.7-g925-queue4-experimental" in gradle
 
 block = src[src.index('Button g925MaxNativeStream = button('):
             src.index('card.addView(g925MaxNativeStream,', src.index('Button g925MaxNativeStream = button('))]
