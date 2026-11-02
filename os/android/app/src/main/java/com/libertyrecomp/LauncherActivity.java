@@ -130,6 +130,7 @@ public class LauncherActivity extends Activity {
         }
         File external = getExternalFilesDir(null);
         mDataRoot = external != null ? external : getFilesDir();
+        initializeG925NativeMaxDefaults();
         loadFonts();
         loadSounds();
         setContentView(buildLayout());
@@ -778,6 +779,117 @@ public class LauncherActivity extends Activity {
                     new String[] {"Default", "Faint", "Light", "Normal", "Strong"},
                     new String[] {"0.4", "0.7", "1.0", "1.5"}),
     };
+    // Deliberately max-quality opt-in/out baseline for the user's G925 device.
+    // Screen-resolution output = 0; native renderer (no upscaling).
+    // CPU-frame cap/thermal options are performance policy, not visual sliders.
+    private static final String G925_MAX_DEFAULT_MARKER = ".g925_native_max_v3_initialized";
+    private static final String G925_MAX_PREVIOUS_GRAPHICS = "graphics.before_g925_max_v3.txt";
+    private static final String[][] G925_NATIVE_MAX_PROFILE = {
+            {"gta4_output_height_cap", "0"},
+            {"gta4_native_upscaler", "native"},
+            {"gta4_native_anti_aliasing", "smaa"},
+            {"gta4_anisotropic_filtering", "16x"},
+            {"gta4_frame_limit", "60"},
+            {"gta4_draw_distance_scale", "1.2"},
+            {"gta4_traffic_density_scale", "1.0"},
+            {"gta4_shadow_map_base_size", "512"},
+            {"gta4_reflection_resolution", "full"},
+            {"gta4_reflection_capture_distance", "far"},
+            {"gta4_reflection_aa", "original"},
+            {"gta4_dynamic_draw_distance", "false"},
+            {"gta4_fps_guard", "0"},
+            {"gta4_extra_frames_in_flight", "0"},
+            {"android_performance_hint_target_ms", "20"},
+            {"android_thermal_guard", "false"},
+            {"gta4_motion_blur", "false"},
+    };
+
+    /**
+     * A one-time G925-specific upgrade. On install of this experimental APK,
+     * select native panel-resolution/highest available detail rather than
+     * silently inheriting the previous Low/High custom settings.
+     *
+     * Preserve the prior graphics.txt for recovery and NEVER alter it on later
+     * launches; the user can select a faster profile at any time. If backup
+     * or atomic write fails, leave the old file intact and retry next launch.
+     */
+    private void initializeG925NativeMaxDefaults() {
+        if (!DriverBridge.isMaliBuild()) return;
+        File marker = new File(mDataRoot, G925_MAX_DEFAULT_MARKER);
+        if (marker.isFile()) return;
+        File graphics = new File(mDataRoot, LibertyActivity.GRAPHICS_FILE);
+        File previous = new File(mDataRoot, G925_MAX_PREVIOUS_GRAPHICS);
+        File staged = new File(mDataRoot, "graphics.g925_max_v3.tmp");
+        try {
+            if (graphics.isFile() && !previous.isFile()) {
+                java.nio.file.Files.copy(graphics.toPath(), previous.toPath());
+            }
+            StringBuilder content = new StringBuilder(
+                    "# G925 Native Max v3 defaults - high fidelity baseline.\\n"
+                    + "# Selected once on installation. Edit in the launcher.\\n");
+            for (String[] entry : G925_NATIVE_MAX_PROFILE) {
+                if (entry[0].equals("gta4_traffic_density_scale")) {
+                    // This selector controls four independent density CVars.
+                    for (String key : new String[] {"gta4_traffic_density_scale",
+                            "gta4_parked_car_density_scale", "gta4_ped_density_scale",
+                            "gta4_scenario_ped_density_scale"}) {
+                        content.append("--").append(key).append("=").append(entry[1]).append('\n');
+                    }
+                } else {
+                    content.append("--").append(entry[0]).append("=").append(entry[1]).append('\n');
+                }
+            }
+            try (OutputStream output = new FileOutputStream(staged)) {
+                output.write(content.toString().getBytes(StandardCharsets.UTF_8));
+            }
+            java.nio.file.Files.move(staged.toPath(), graphics.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            try (OutputStream output = new FileOutputStream(marker)) {
+                output.write("G925 Native Max defaults configured once\\n"
+                        .getBytes(StandardCharsets.UTF_8));
+            }
+            Log.i(TAG, "G925 v3: max native settings selected; previous settings backed up");
+        } catch (IOException e) {
+            Log.e(TAG, "G925 native max initial setup failed - previous settings preserved", e);
+            // Failure to write the marker only means the next launch retries.
+        } finally {
+            if (staged.isFile()) staged.delete();
+        }
+    }
+
+    /** Restore settings that were used before Native Max v3, without uninstalling. */
+    private void restoreG925PreviousGraphics() {
+        File previous = new File(mDataRoot, G925_MAX_PREVIOUS_GRAPHICS);
+        if (!previous.isFile()) {
+            toast("No pre-v3 graphics backup exists");
+            return;
+        }
+        try {
+            java.nio.file.Files.copy(previous.toPath(),
+                    new File(mDataRoot, LibertyActivity.GRAPHICS_FILE).toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            java.util.Map<String, String> saved = readGraphicsSettings();
+            for (int i = 0; i < GRAPHICS_SETTINGS.length; i++) {
+                GraphicsSetting setting = GRAPHICS_SETTINGS[i];
+                int position = 0;
+                String current = saved.get(setting.cvars[0]);
+                if (current != null) {
+                    for (int j = 0; j < setting.values.length; j++) {
+                        if (setting.values[j].equals(current)) position = j + 1;
+                    }
+                }
+                mGraphicsSpinners[i].setSelection(position, false);
+                mGraphicsPositions[i] = position;
+            }
+            mSettingsDirty = false;
+            updateSaveStatus();
+            toast("Previous graphics restored - restart Play to apply");
+        } catch (IOException e) {
+            Log.e(TAG, "could not restore pre-v3 graphics", e);
+            toast("Could not restore prior settings: " + e.getMessage());
+        }
+    }
+
     private final Selector[] mGraphicsSpinners = new Selector[GRAPHICS_SETTINGS.length];
     // Last known selection per dropdown, so only real changes mark the
     // settings unsaved (Android also fires a selection event at startup).
@@ -860,6 +972,23 @@ public class LauncherActivity extends Activity {
         mGraphicsLoading = false;
         for (LinearLayout page : pages) card.addView(page, matchWrap(dp(4)));
         selectGraphicsTab(tabs, pages, 0);
+
+        // G925 Native Max v3. One-time defaults already applied on first launch.
+        card.addView(heading("G925 NATIVE MAX - DEFAULT GRAPHICS", 18), matchWrap(dp(8)));
+        card.addView(text("Highest available native screen resolution and visual detail are "
+                + "selected by default in this edition. Performance and frame pacing are "
+                + "optimized separately. Full-distance reflections are particularly heavy; "
+                + "use High Smooth only if needed. Choose Save changes and Play to test.",
+                12, R.color.picker_muted), matchWrap(dp(8)));
+        Button g925NativeMax = button("G925 NATIVE MAX / ALL HIGH", true);
+        g925NativeMax.setOnClickListener(v -> applyG925Preset(
+                G925_NATIVE_MAX_PROFILE, "G925 Native Max"));
+        card.addView(g925NativeMax, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        Button restoreG925Previous = button("RESTORE PREVIOUS GRAPHICS", false);
+        restoreG925Previous.setOnClickListener(v -> restoreG925PreviousGraphics());
+        card.addView(restoreG925Previous, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
 
         // G925 GRAPHICS LAB v2 - changes only graphics selectors, not Android drivers.
         card.addView(heading("IMMORTALIS G925 PERFORMANCE V2", 17), matchWrap(dp(8)));
