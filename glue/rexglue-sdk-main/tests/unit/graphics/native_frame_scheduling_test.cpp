@@ -14,6 +14,25 @@
 
 namespace gta4 = rex::graphics::gta4_native;
 
+TEST_CASE("G925 v2 extended caches preserve safety budget and expiry policy") {
+  // Longer history avoids some repeated uploads while returning to streets,
+  // but buffers remain capped and Vulkan-budget pressure still triggers eviction.
+  REQUIRE(gta4::kNativeTextureEvictionGraceFrames == 300);
+  REQUIRE(gta4::kNativeTextureCacheRetentionFrames == 720);
+  REQUIRE(gta4::kNativeBufferCacheRetentionFrames == 720);
+  REQUIRE(gta4::kNativeBufferCacheLimitMiB == 320);
+  REQUIRE(gta4::kNativeTexturePressureEnterPercent == 90);
+  REQUIRE(gta4::kNativeTexturePressureExitPercent == 85);
+
+  REQUIRE_FALSE(gta4::ShouldEvictNativeTexture(1300, 1000, 300));
+  REQUIRE(gta4::ShouldEvictNativeTexture(1301, 1000, 300));
+  REQUIRE_FALSE(gta4::ShouldReclaimNativeBuffer(true, false, 1720, 1000, 720));
+  REQUIRE(gta4::ShouldReclaimNativeBuffer(true, false, 1721, 1000, 720));
+  REQUIRE(gta4::ShouldReclaimNativeBuffer(true, true, 1100, 1000, 720));
+  REQUIRE(gta4::UpdateNativeTexturePressure(false, true, 900, 1000));
+  REQUIRE_FALSE(gta4::UpdateNativeTexturePressure(true, true, 840, 1000));
+}
+
 TEST_CASE("GTA IV native texture eviction waits out the full grace window") {
   constexpr uint32_t kGrace = gta4::kNativeTextureEvictionGraceFrames;
   const uint32_t last_used = 1000;
