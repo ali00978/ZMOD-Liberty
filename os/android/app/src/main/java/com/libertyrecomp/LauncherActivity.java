@@ -130,7 +130,7 @@ public class LauncherActivity extends Activity {
         }
         File external = getExternalFilesDir(null);
         mDataRoot = external != null ? external : getFilesDir();
-        initializeG925NativeMaxDefaults();
+        initializeG925Standard60Defaults();
         loadFonts();
         loadSounds();
         setContentView(buildLayout());
@@ -779,9 +779,17 @@ public class LauncherActivity extends Activity {
                     new String[] {"Default", "Faint", "Light", "Normal", "Strong"},
                     new String[] {"0.4", "0.7", "1.0", "1.5"}),
     };
-    // Deliberately max-quality opt-in/out baseline for the user's G925 device.
+    // Explicit high-quality benchmark preset; NOT the default for this phone.
     // Screen-resolution output = 0; native renderer (no upscaling).
     // CPU-frame cap/thermal options are performance policy, not visual sliders.
+    private static final String G925_STANDARD_60_MARKER = ".g925_standard60_v1_initialized";
+    private static final String G925_STANDARD_PREVIOUS_GRAPHICS = "graphics.before_g925_standard60_v1.txt";
+    private static final String[][] G925_STANDARD_60_PROFILE = {
+            {"gta4_frame_limit", "60"},
+            {"gta4_extra_frames_in_flight", "0"},
+            {"android_performance_hint_target_ms", "20"},
+            {"android_thermal_guard", "true"},
+    };
     private static final String G925_MAX_DEFAULT_MARKER = ".g925_native_max_v3_initialized";
     private static final String G925_MAX_PREVIOUS_GRAPHICS = "graphics.before_g925_max_v3.txt";
     private static final String[][] G925_NATIVE_MAX_PROFILE = {
@@ -805,53 +813,56 @@ public class LauncherActivity extends Activity {
     };
 
     /**
-     * A one-time G925-specific upgrade. On install of this experimental APK,
-     * select native panel-resolution/highest available detail rather than
-     * silently inheriting the previous Low/High custom settings.
+     * Establish Standard graphics with a 60 FPS CAP, not forced ALL HIGH.
+     * Default engine resolution, shadows, reflections, population and AA
+     * remain untouched. A 60 FPS cap is not a promise of achieved 60 FPS.
      *
-     * Preserve the prior graphics.txt for recovery and NEVER alter it on later
-     * launches; the user can select a faster profile at any time. If backup
-     * or atomic write fails, leave the old file intact and retry next launch.
+     * On upgrade, migrate only a recognizable old Native Max profile or
+     * untouched defaults. Preserve any other custom graphics selections.
+     * Never repeat after a successful first run; retain rollback backup.
      */
-    private void initializeG925NativeMaxDefaults() {
+    private void initializeG925Standard60Defaults() {
         if (!DriverBridge.isMaliBuild()) return;
-        File marker = new File(mDataRoot, G925_MAX_DEFAULT_MARKER);
+        File marker = new File(mDataRoot, G925_STANDARD_60_MARKER);
         if (marker.isFile()) return;
         File graphics = new File(mDataRoot, LibertyActivity.GRAPHICS_FILE);
-        File previous = new File(mDataRoot, G925_MAX_PREVIOUS_GRAPHICS);
-        File staged = new File(mDataRoot, "graphics.g925_max_v3.tmp");
+        File previous = new File(mDataRoot, G925_STANDARD_PREVIOUS_GRAPHICS);
+        File staged = new File(mDataRoot, "graphics.g925_standard60_v1.tmp");
         try {
-            if (graphics.isFile() && !previous.isFile()) {
-                java.nio.file.Files.copy(graphics.toPath(), previous.toPath());
-            }
-            StringBuilder content = new StringBuilder(
-                    "# G925 Native Max v3 defaults - high fidelity baseline.\n"
-                    + "# Selected once on installation. Edit in the launcher.\n");
-            for (String[] entry : G925_NATIVE_MAX_PROFILE) {
-                if (entry[0].equals("gta4_traffic_density_scale")) {
-                    // This selector controls four independent density CVars.
-                    for (String key : new String[] {"gta4_traffic_density_scale",
-                            "gta4_parked_car_density_scale", "gta4_ped_density_scale",
-                            "gta4_scenario_ped_density_scale"}) {
-                        content.append("--").append(key).append("=").append(entry[1]).append('\n');
-                    }
-                } else {
-                    content.append("--").append(entry[0]).append("=").append(entry[1]).append('\n');
+            java.util.Map<String, String> saved = readGraphicsSettings();
+            boolean oldMax = "full".equals(saved.get("gta4_reflection_resolution"))
+                    && "far".equals(saved.get("gta4_reflection_capture_distance"))
+                    && "1.2".equals(saved.get("gta4_draw_distance_scale"))
+                    && "1.0".equals(saved.get("gta4_traffic_density_scale"));
+            boolean unchangedDefaults = saved.isEmpty()
+                    || (saved.size() == 1 && saved.containsKey("gta4_frame_limit"));
+
+            if (!graphics.isFile() || oldMax || unchangedDefaults) {
+                if (graphics.isFile() && !previous.isFile()) {
+                    java.nio.file.Files.copy(graphics.toPath(), previous.toPath());
                 }
+                StringBuilder content = new StringBuilder(
+                        "# G925 Standard graphics / 60 FPS cap. Visual settings stay at engine defaults.\n"
+                        + "# One-time initialization; edit freely in Graphics & Controls.\n");
+                for (String[] entry : G925_STANDARD_60_PROFILE) {
+                    content.append("--").append(entry[0]).append("=")
+                            .append(entry[1]).append('\n');
+                }
+                try (OutputStream output = new FileOutputStream(staged)) {
+                    output.write(content.toString().getBytes(StandardCharsets.UTF_8));
+                }
+                java.nio.file.Files.move(staged.toPath(), graphics.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                Log.i(TAG, "G925 Standard 60: native-max overrides removed; visuals at defaults");
+            } else {
+                Log.i(TAG, "G925 Standard 60: existing customized graphics preserved");
             }
-            try (OutputStream output = new FileOutputStream(staged)) {
-                output.write(content.toString().getBytes(StandardCharsets.UTF_8));
-            }
-            java.nio.file.Files.move(staged.toPath(), graphics.toPath(),
-                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             try (OutputStream output = new FileOutputStream(marker)) {
-                output.write("G925 Native Max defaults configured once\n"
+                output.write("G925 Standard 60 evaluated once\n"
                         .getBytes(StandardCharsets.UTF_8));
             }
-            Log.i(TAG, "G925 v3: max native settings selected; previous settings backed up");
         } catch (IOException e) {
-            Log.e(TAG, "G925 native max initial setup failed - previous settings preserved", e);
-            // Failure to write the marker only means the next launch retries.
+            Log.e(TAG, "G925 Standard 60 initialization failed; current file preserved", e);
         } finally {
             if (staged.isFile()) staged.delete();
         }
@@ -859,9 +870,10 @@ public class LauncherActivity extends Activity {
 
     /** Restore settings that were used before Native Max v3, without uninstalling. */
     private void restoreG925PreviousGraphics() {
-        File previous = new File(mDataRoot, G925_MAX_PREVIOUS_GRAPHICS);
+        File previous = new File(mDataRoot, G925_STANDARD_PREVIOUS_GRAPHICS);
+        if (!previous.isFile()) previous = new File(mDataRoot, G925_MAX_PREVIOUS_GRAPHICS);
         if (!previous.isFile()) {
-            toast("No pre-v3 graphics backup exists");
+            toast("No earlier graphics backup exists");
             return;
         }
         try {
@@ -974,12 +986,15 @@ public class LauncherActivity extends Activity {
         selectGraphicsTab(tabs, pages, 0);
 
         // G925 Native Max v3. One-time defaults already applied on first launch.
-        card.addView(heading("G925 NATIVE MAX - DEFAULT GRAPHICS", 18), matchWrap(dp(8)));
-        card.addView(text("Highest available native screen resolution and visual detail are "
-                + "selected by default in this edition. Performance and frame pacing are "
-                + "optimized separately. Full-distance reflections are particularly heavy; "
-                + "use High Smooth only if needed. Choose Save changes and Play to test.",
+        card.addView(heading("G925 STANDARD 60 - DEFAULT GRAPHICS", 18), matchWrap(dp(8)));
+        card.addView(text("Standard image quality with a 60 FPS CAP, run-ahead 0 and balanced "
+                + "thermal handling. Actual FPS depends on game/render performance. "
+                + "ALL HIGH below is optional and may be much slower.",
                 12, R.color.picker_muted), matchWrap(dp(8)));
+        Button g925Standard60 = button("G925 STANDARD / 60 FPS", true);
+        g925Standard60.setOnClickListener(v -> resetGraphicsToStandard60());
+        card.addView(g925Standard60, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
         Button g925NativeMax = button("G925 NATIVE MAX / ALL HIGH", true);
         g925NativeMax.setOnClickListener(v -> applyG925Preset(
                 G925_NATIVE_MAX_PROFILE, "G925 Native Max"));
@@ -1152,33 +1167,21 @@ public class LauncherActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
 
         Button reset = button("RESET TO DEFAULT", false);
-        reset.setOnClickListener(v -> {
-            // Standard keeps the original graphics defaults but targets 60 FPS.
-            for (int i = 0; i < mGraphicsSpinners.length; ++i) {
-                mGraphicsSpinners[i].setSelection(0, false);
-                mGraphicsPositions[i] = 0;
-            }
-            // Explicitly override only the frame limiter; leave every visual selector at Default.
-            for (int i = 0; i < GRAPHICS_SETTINGS.length; ++i) {
-                if ("gta4_frame_limit".equals(GRAPHICS_SETTINGS[i].cvars[0])) {
-                    for (int j = 0; j < GRAPHICS_SETTINGS[i].values.length; ++j) {
-                        if ("60".equals(GRAPHICS_SETTINGS[i].values[j])) {
-                            mGraphicsSpinners[i].setSelection(j + 1, false);
-                            mGraphicsPositions[i] = j + 1;
-                            break;
-                        }
-                    }
-                    break;
-                }
-            }
-            markSettingsChanged();
-            toast("Standard graphics + 60 FPS cap - press Save changes");
-        });
+        reset.setOnClickListener(v -> resetGraphicsToStandard60());
         LinearLayout.LayoutParams resetParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
         resetParams.topMargin = dp(14);
         card.addView(reset, resetParams);
         return card;
+    }
+
+    /** Reset every visual selector; only CPU/queue policy and the FPS cap differ. */
+    private void resetGraphicsToStandard60() {
+        for (int i = 0; i < mGraphicsSpinners.length; ++i) {
+            mGraphicsSpinners[i].setSelection(0, false);
+            mGraphicsPositions[i] = 0;
+        }
+        applyG925Preset(G925_STANDARD_60_PROFILE, "G925 Standard graphics / 60 FPS");
     }
 
     /** Apply documented launcher options; do not modify GPU drivers or user saves. */

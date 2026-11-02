@@ -35,7 +35,7 @@ required = {
 assert all(values.get(k) == v for k, v in required.items()), values
 
 # All settings must map to documented selector values.
-settings = java[java.index("private static final GraphicsSetting[] GRAPHICS_SETTINGS"):java.index("private static final String G925_MAX_DEFAULT_MARKER")]
+settings = java[java.index("private static final GraphicsSetting[] GRAPHICS_SETTINGS"):java.index("private static final String G925_STANDARD_60_MARKER")]
 pattern = r'new GraphicsSetting\("([^"]+)",[\s\S]*?new String\[\] \{([^}]+)\},\s*new String\[\] \{([^}]+)\},\s*new String\[\] \{([^}]+)\}\)'
 menu = {}
 for _, keys, labels, item_values in re.findall(pattern, settings):
@@ -45,18 +45,34 @@ for key, value in values.items():
     assert key in menu, f"Missing graphics selector: {key}"
     assert value in menu[key], f"Invalid selection: {key}={value}"
 
-# One-time rollout, no changes on subsequent launches, backup before overwrite.
-setup = java[java.index("private void initializeG925NativeMaxDefaults()"):java.index("private void restoreG925PreviousGraphics()")]
+# The native MAX profile still exists, but is now opt-in. On first start we
+# apply only standard visuals with a 60 FPS cap, and preserve custom graphics.
+setup = java[java.index("private void initializeG925Standard60Defaults()"):
+             java.index("private void restoreG925PreviousGraphics()")]
 assert "if (!DriverBridge.isMaliBuild()) return;" in setup
 assert "if (marker.isFile()) return;" in setup
 assert setup.index("java.nio.file.Files.copy(graphics.toPath(), previous.toPath())") < setup.index("java.nio.file.Files.move(staged.toPath(), graphics.toPath()")
-assert "G925_MAX_PREVIOUS_GRAPHICS" in setup
-assert "gta4_parked_car_density_scale" in setup
-assert "gta4_ped_density_scale" in setup
-assert "gta4_scenario_ped_density_scale" in setup
+assert "G925_STANDARD_PREVIOUS_GRAPHICS" in setup
+assert "existing customized graphics preserved" in setup
+assert "oldMax" in setup and "unchangedDefaults" in setup
 assert "StandardCopyOption.REPLACE_EXISTING" in setup
-assert "initializeG925NativeMaxDefaults();" in java
-assert java.index("initializeG925NativeMaxDefaults();") < java.index("setContentView(buildLayout());")
+assert "initializeG925Standard60Defaults();" in java
+assert java.index("initializeG925Standard60Defaults();") < java.index("setContentView(buildLayout());")
+standard = java[java.index("private static final String[][] G925_STANDARD_60_PROFILE"):
+                java.index("private static final String G925_MAX_DEFAULT_MARKER")]
+standard_values = dict(re.findall(r'\{"([^"]+)", "([^"]+)"\}', standard))
+assert standard_values == {
+    "gta4_frame_limit": "60",
+    "gta4_extra_frames_in_flight": "0",
+    "android_performance_hint_target_ms": "20",
+    "android_thermal_guard": "true",
+}
+assert not any(key in standard_values for key in (
+    "gta4_output_height_cap", "gta4_reflection_resolution",
+    "gta4_shadow_map_base_size", "gta4_draw_distance_scale"))
+assert "G925 STANDARD / 60 FPS" in java
+assert "resetGraphicsToStandard60()" in java
+assert "applyG925Preset(G925_STANDARD_60_PROFILE" in java
 
 # Previous settings can be restored by the user without an uninstall.
 assert "RESTORE PREVIOUS GRAPHICS" in java
@@ -67,8 +83,8 @@ assert "GRAPHICS_FILE" in activity
 assert "withoutDuplicateOptions(arguments)" in activity
 
 # Experimental native-max APK is versioned above previous lab and perf v2.
-assert "versionCode   = 23" in gradle
-assert '-alpha-1.5-g925-v4-diagnostics' in gradle
+assert "versionCode   = 24" in gradle
+assert '-alpha-1.6-g925-standard60-fast' in gradle
 assert "feature/g925-native-max-v3" in workflow
 
-print(f"PASS: G925 native screen-resolution defaults, {len(values)} mapped controls, backup and rollback")
+print(f"PASS: G925 native MAX opt-in and Standard 60 default, {len(values)} mapped controls, backup and rollback")
