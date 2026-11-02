@@ -861,12 +861,64 @@ public class LauncherActivity extends Activity {
         for (LinearLayout page : pages) card.addView(page, matchWrap(dp(4)));
         selectGraphicsTab(tabs, pages, 0);
 
-        // G925 GRAPHICS LAB v1 - changes only graphics selectors, not Android drivers.
-        card.addView(heading("IMMORTALIS G925 GRAPHICS LAB", 17), matchWrap(dp(8)));
-        card.addView(text("Optional graphics presets. Sharp is balanced, Visual+ uses FSR "
-                + "Ultra Quality with sharper shadows; Ultra is a short benchmark only. "
-                + "Higher graphics settings may LOWER FPS. Press Save changes, then Play.",
+        // G925 GRAPHICS LAB v2 - changes only graphics selectors, not Android drivers.
+        card.addView(heading("IMMORTALIS G925 PERFORMANCE V2", 17), matchWrap(dp(8)));
+        card.addView(text("The APK does not override your old High settings automatically. "
+                + "For driving stutters, choose HIGH SMOOTH first: 1080p FSR output with "
+                + "sharper shadows, 8x texture filtering and balanced frame pacing. "
+                + "NATIVE DETAIL retains native 900p. Press Save changes, then Play. "
+                + "These modes have not yet been benchmarked on your phone.",
                 12, R.color.picker_muted), matchWrap(dp(8)));
+
+        Button g925HighSmooth = button("G925 HIGH SMOOTH - RECOMMENDED", true);
+        g925HighSmooth.setOnClickListener(v -> applyG925Preset(new String[][] {
+                {"gta4_output_height_cap", "1080"},
+                {"gta4_native_upscaler", "fsr1"},
+                {"gta4_fsr1_quality", "quality"},
+                {"gta4_native_anti_aliasing", "smaa"},
+                {"gta4_anisotropic_filtering", "8x"},
+                {"gta4_frame_limit", "40"},
+                {"gta4_draw_distance_scale", "1.0"},
+                {"gta4_traffic_density_scale", "0.4"},
+                {"gta4_shadow_map_base_size", "512"},
+                {"gta4_reflection_resolution", "original"},
+                {"gta4_reflection_capture_distance", "near"},
+                {"gta4_reflection_aa", "off"},
+                {"gta4_dynamic_draw_distance", "true"},
+                {"gta4_fps_guard", "2"},
+                {"gta4_extra_frames_in_flight", "0"},
+                {"android_performance_hint_target_ms", "20"},
+                {"android_thermal_guard", "true"},
+                {"gta4_motion_blur", "false"}
+        }, "G925 High Smooth"));
+        card.addView(g925HighSmooth, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+
+        Button g925NativeDetail = button("G925 NATIVE DETAIL - SHARPER", false);
+        g925NativeDetail.setOnClickListener(v -> applyG925Preset(new String[][] {
+                {"gta4_output_height_cap", "900"},
+                {"gta4_native_upscaler", "native"},
+                {"gta4_native_anti_aliasing", "smaa"},
+                {"gta4_anisotropic_filtering", "8x"},
+                {"gta4_frame_limit", "40"},
+                {"gta4_draw_distance_scale", "1.0"},
+                {"gta4_traffic_density_scale", "0.4"},
+                {"gta4_shadow_map_base_size", "512"},
+                {"gta4_reflection_resolution", "original"},
+                {"gta4_reflection_capture_distance", "near"},
+                {"gta4_reflection_aa", "off"},
+                {"gta4_dynamic_draw_distance", "true"},
+                {"gta4_fps_guard", "2"},
+                {"gta4_extra_frames_in_flight", "0"},
+                {"android_performance_hint_target_ms", "20"},
+                {"android_thermal_guard", "true"},
+                {"gta4_motion_blur", "false"}
+        }, "G925 Native Detail"));
+        card.addView(g925NativeDetail, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        card.addView(text("Other modes: Sharp/Balanced, Visual+ and Ultra are kept for "
+                + "comparison. Ultra may run substantially slower.",
+                11, R.color.picker_muted), matchWrap(dp(8)));
         Button g925Preset0 = button("G925 SHARP / BALANCED", false);
         g925Preset0.setOnClickListener(v -> applyG925Preset(new String[][] {
                 {"gta4_output_height_cap", "900"},
