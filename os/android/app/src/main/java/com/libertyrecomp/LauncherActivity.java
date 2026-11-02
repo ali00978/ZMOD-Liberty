@@ -825,8 +825,8 @@ public class LauncherActivity extends Activity {
                 java.nio.file.Files.copy(graphics.toPath(), previous.toPath());
             }
             StringBuilder content = new StringBuilder(
-                    "# G925 Native Max v3 defaults - high fidelity baseline.\\n"
-                    + "# Selected once on installation. Edit in the launcher.\\n");
+                    "# G925 Native Max v3 defaults - high fidelity baseline.\n"
+                    + "# Selected once on installation. Edit in the launcher.\n");
             for (String[] entry : G925_NATIVE_MAX_PROFILE) {
                 if (entry[0].equals("gta4_traffic_density_scale")) {
                     // This selector controls four independent density CVars.
@@ -845,7 +845,7 @@ public class LauncherActivity extends Activity {
             java.nio.file.Files.move(staged.toPath(), graphics.toPath(),
                     java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             try (OutputStream output = new FileOutputStream(marker)) {
-                output.write("G925 Native Max defaults configured once\\n"
+                output.write("G925 Native Max defaults configured once\n"
                         .getBytes(StandardCharsets.UTF_8));
             }
             Log.i(TAG, "G925 v3: max native settings selected; previous settings backed up");
