@@ -130,6 +130,7 @@ public class LauncherActivity extends Activity {
         }
         File external = getExternalFilesDir(null);
         mDataRoot = external != null ? external : getFilesDir();
+        initializeG925StockStableDefaults();
         loadFonts();
         loadSounds();
         setContentView(buildLayout());
@@ -648,6 +649,76 @@ public class LauncherActivity extends Activity {
         return frame;
     }
 
+    private static final String G925_STOCK_MARKER = ".g925_stock_stable_v1";
+    private static final String G925_STOCK_BACKUP = "graphics.before_g925_stock_stable_v1.txt";
+
+    /** Migrate only recognizable experimental G925 profiles; never change saves. */
+    private void initializeG925StockStableDefaults() {
+        if (!DriverBridge.isMaliBuild()) return;
+        File marker = new File(mDataRoot, G925_STOCK_MARKER);
+        if (marker.isFile()) return;
+        File graphics = new File(mDataRoot, LibertyActivity.GRAPHICS_FILE);
+        File backup = new File(mDataRoot, G925_STOCK_BACKUP);
+        File temporary = new File(mDataRoot, "graphics.g925_stock_stable.tmp");
+        try {
+            java.util.Map<String, String> old = readGraphicsSettings();
+            boolean experimental =
+                    "4".equals(old.get("gta4_extra_frames_in_flight"))
+                    || ("60".equals(old.get("gta4_frame_limit"))
+                        && "20".equals(old.get("android_performance_hint_target_ms")))
+                    || ("1.2".equals(old.get("gta4_draw_distance_scale"))
+                        && "far".equals(old.get("gta4_reflection_capture_distance")));
+            if (graphics.isFile() && experimental) {
+                if (!backup.isFile()) {
+                    java.nio.file.Files.copy(graphics.toPath(), backup.toPath());
+                }
+                StringBuilder text = new StringBuilder(
+                        "# Restored stock Mali defaults, previous graphics backed up.\n"
+                        + "--gta4_frame_limit=30\n"
+                        + "--gta4_extra_frames_in_flight=0\n");
+                // Touch-control preferences stay intact through the rollback.
+                for (GraphicsSetting setting : GRAPHICS_SETTINGS) {
+                    String key = setting.cvars[0];
+                    if (!key.startsWith("gta4_touch")) continue;
+                    String previous = old.get(key);
+                    for (String valid : setting.values) {
+                        if (valid.equals(previous)) {
+                            text.append("--").append(key).append("=")
+                                    .append(valid).append('\n');
+                            break;
+                        }
+                    }
+                }
+                try (OutputStream out = new FileOutputStream(temporary)) {
+                    out.write(text.toString().getBytes(StandardCharsets.UTF_8));
+                }
+                java.nio.file.Files.move(temporary.toPath(), graphics.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                Log.i(TAG, "G925 Stock Stable restored original visual and frame-queue settings");
+            }
+            try (OutputStream out = new FileOutputStream(marker)) {
+                out.write("G925 stock rollback checked\n".getBytes(StandardCharsets.UTF_8));
+            }
+        } catch (IOException e) {
+            Log.e(TAG, "Stock stable rollback failed; prior settings kept", e);
+        } finally {
+            if (temporary.isFile()) temporary.delete();
+        }
+    }
+
+    /** Stock visual defaults with two comparable frame caps, without touch reset. */
+    private void applyG925StockPreset(String cap) {
+        for (int i = 0; i < GRAPHICS_SETTINGS.length; ++i) {
+            if (GRAPHICS_SETTINGS[i].cvars[0].startsWith("gta4_touch")) continue;
+            mGraphicsSpinners[i].setSelection(0, false);
+            mGraphicsPositions[i] = 0;
+        }
+        applyG925Preset(new String[][] {
+                {"gta4_frame_limit", cap},
+                {"gta4_extra_frames_in_flight", "0"},
+        }, cap.equals("30") ? "Original Stock 30 FPS" : "Original Stock 60 FPS cap");
+    }
+
     // Graphics settings: one dropdown per setting, saved to graphics.txt, which
     // LibertyActivity appends after args.txt. "Default" writes nothing, so the
     // value from args.txt applies.
@@ -856,6 +927,21 @@ public class LauncherActivity extends Activity {
         mGraphicsLoading = false;
         for (LinearLayout page : pages) card.addView(page, matchWrap(dp(4)));
         selectGraphicsTab(tabs, pages, 0);
+
+        // Baseline uses the original Mali-native engine, not G925 cache experiments.
+        card.addView(heading("G925 STOCK STABLE / ORIGINAL ENGINE", 17), matchWrap(dp(8)));
+        card.addView(text("Same original graphics in both tests. Run-ahead 0. "
+                + "Start with the smoother 30 FPS baseline, then test a 60 FPS cap. "
+                + "Press Save changes and restart Play.",
+                12, R.color.picker_muted), matchWrap(dp(8)));
+        Button stock30 = button("G925 STOCK 30 - SMOOTH", true);
+        stock30.setOnClickListener(v -> applyG925StockPreset("30"));
+        card.addView(stock30, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        Button stock60 = button("G925 STOCK 60 - TEST", false);
+        stock60.setOnClickListener(v -> applyG925StockPreset("60"));
+        card.addView(stock60, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
 
         // G925 GRAPHICS LAB v1 - changes only graphics selectors, not Android drivers.
         card.addView(heading("IMMORTALIS G925 GRAPHICS LAB", 17), matchWrap(dp(8)));
