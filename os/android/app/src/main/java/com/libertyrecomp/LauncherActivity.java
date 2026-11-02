@@ -731,11 +731,11 @@ public class LauncherActivity extends Activity {
                     new String[] {"Default", "0", "1", "2"},
                     new String[] {"0", "1", "2"}),
             new GraphicsSetting("CPU boost",
-                    "How hard the game asks Android for CPU speed. Steady keeps the clocks up "
-                            + "(fewer drops, a little warmer); Battery saves power",
+                    "Extreme asks Android for a 16 ms CPU work target (not an overclock). "
+                            + "May increase heat and throttling; compare against Maximum and Steady.",
                     new String[] {"android_performance_hint_target_ms"},
-                    new String[] {"Default", "Maximum", "Steady", "Balanced", "Battery"},
-                    new String[] {"20", "25", "30", "33"}),
+                    new String[] {"Default", "Extreme (16 ms)", "Maximum", "Steady", "Balanced", "Battery"},
+                    new String[] {"16", "20", "25", "30", "33"}),
             new GraphicsSetting("64-bit shader fallback",
                     "Used automatically on GPUs without shaderInt64. Force it on to test it on "
                             + "a GPU that has it: the game should look and run the same",
