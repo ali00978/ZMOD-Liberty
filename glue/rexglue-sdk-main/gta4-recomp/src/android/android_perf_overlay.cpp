@@ -1,6 +1,7 @@
 #include "android/android_perf_overlay.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cfloat>
 #include <cstdlib>
@@ -8,7 +9,6 @@
 #include <cstring>
 #include <ctime>
 #include <string>
-#include <vector>
 
 #include <unistd.h>
 
@@ -183,12 +183,16 @@ void DrawPerfOverlay(ImDrawList* draw, ImFont* font, float width, float height) 
     char text[48];
     ImU32 color;
   };
-  std::vector<Line> lines;
-  auto add = [&lines](ImU32 color, const char* format, auto... values) {
-    Line line{};
+  // The overlay can render every display tick: avoid a new heap-backed
+  // vector (and growth allocations) per frame, especially when enabled for
+  // stutter profiling. Seven lines are currently possible; capacity is eight.
+  std::array<Line, 8> lines{};
+  size_t line_count = 0;
+  auto add = [&lines, &line_count](ImU32 color, const char* format, auto... values) {
+    if (line_count >= lines.size()) return;
+    Line& line = lines[line_count++];
     std::snprintf(line.text, sizeof(line.text), format, values...);
     line.color = color;
-    lines.push_back(line);
   };
   // Green above 28, yellow above 20, red below.
   const ImU32 fps_color = fps >= 28.0f   ? IM_COL32(120, 230, 120, 255)
@@ -222,22 +226,24 @@ void DrawPerfOverlay(ImDrawList* draw, ImFont* font, float width, float height) 
     if (g_sample.battery_c > -100.0) add(white, "TEMP %.0fC", g_sample.battery_c);
     else add(white, "%s", "TEMP --");
   }
-  if (lines.empty()) return;
+  if (line_count == 0) return;
 
   // Small: each line is 2.6% of the screen height (about 19 px at 720p).
   const float size = height * 0.026f;
   const float pad = size * 0.35f;
   const float line_gap = size * 1.12f;
   float text_width = 0.0f;
-  for (const Line& line : lines) {
+  for (size_t i = 0; i < line_count; ++i) {
+    const Line& line = lines[i];
     text_width = std::max(text_width, font->CalcTextSizeA(size, FLT_MAX, 0.0f, line.text).x);
   }
   const ImVec2 min(height * 0.015f, height * 0.015f);
   const ImVec2 max(min.x + text_width + pad * 2.0f,
-                   min.y + line_gap * float(lines.size()) + pad * 2.0f - (line_gap - size));
+                   min.y + line_gap * float(line_count) + pad * 2.0f - (line_gap - size));
   draw->AddRectFilled(min, max, IM_COL32(0, 0, 0, 140), pad);
   float y = min.y + pad;
-  for (const Line& line : lines) {
+  for (size_t i = 0; i < line_count; ++i) {
+    const Line& line = lines[i];
     draw->AddText(font, size, ImVec2(min.x + pad, y), line.color, line.text);
     y += line_gap;
   }

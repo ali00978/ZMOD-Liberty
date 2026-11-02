@@ -34,3 +34,7 @@ Do not claim improvement until A/B on the actual POCO is complete.
 - Sample CLOCK_MONOTONIC once per new title submission and only once every 64
   waiting polls. The original hook clocked every blocked poll. The independent
   frame-gap histogram still observes each submitted title frame.
+
+- The on-screen performance overlay uses a fixed eight-line array instead
+  of allocating a growing vector every display frame. This avoids UI
+  instrumentation introducing its own frame-time spikes during A/B tests.
