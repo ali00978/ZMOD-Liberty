@@ -10,8 +10,13 @@ namespace rex::graphics::gta4_native {
 // Native texture images are destroyed only after going unreferenced for a
 // full grace window to avoid repeatedly destroying and recreating resources
 // that the title cycles across frames.
-inline constexpr uint32_t kNativeTextureEvictionGraceFrames = 240;
-inline constexpr uint32_t kNativeTextureCacheRetentionFrames = 600;
+// G925 Performance v2 cache experiment: keep recently visited streets' textures
+// alive for moderately longer, to reduce re-uploads during fast driving.
+// Vulkan heap budget checks and allocation-failure recovery remain unchanged.
+// This trades some shared RAM use for potential reductions in streaming hitches;
+// it is not a request to reserve RAM and is not guaranteed to improve FPS.
+inline constexpr uint32_t kNativeTextureEvictionGraceFrames = 300;
+inline constexpr uint32_t kNativeTextureCacheRetentionFrames = 720;
 inline constexpr uint32_t kNativeTextureBudgetReserveDivisor = 10;
 inline constexpr uint32_t kNativeTextureBudgetPollFrames = 120;
 inline constexpr uint32_t kNativeTextureBudgetPollPhaseFrames = 40;
@@ -22,10 +27,12 @@ inline constexpr size_t kNativeBufferShadowValidationSlices = 64;
 // KiB of cold guest memory compared on the guest thread for every stream of
 // every draw. The sweep still covers every byte, over more reuses.
 inline constexpr size_t kNativeBufferShadowValidationMaxBytes = 256;
-inline constexpr uint32_t kNativeBufferCacheRetentionFrames = 600;
+// A modest shared-RAM budget increase for reusable CPU-side geometry captures.
+// Cached, unreferenced buffers are still reclaimable under budget pressure.
+inline constexpr uint32_t kNativeBufferCacheRetentionFrames = 720;
 inline constexpr uint32_t kNativeBufferCachePollFrames = 120;
 inline constexpr uint32_t kNativeBufferCachePollPhaseFrames = 80;
-inline constexpr uint32_t kNativeBufferCacheLimitMiB = 256;
+inline constexpr uint32_t kNativeBufferCacheLimitMiB = 320;
 inline constexpr size_t kNativeMaximumVertexConversionsPerBuffer = 2;
 inline constexpr uint32_t kNativeUploadShrinkObservationFrames = 120;
 
