@@ -3644,6 +3644,7 @@ void Gta4NativeGraphicsSystem::StageNativeFlightDescriptorSlot(NativeDescriptorS
 }
 
 void Gta4NativeGraphicsSystem::StageNativeTextureFlightResources(const NativeTextureImage& image) {
+  if (!IsNativeFlightRecorderEnabled()) return;
   const profile::CpuScope profile_scope(profile::CpuOp::kLifetimeBookkeeping);
 
   const uint32_t guest_handle = image.source ? image.source->handle : 0;
@@ -3669,6 +3670,7 @@ void Gta4NativeGraphicsSystem::StageNativeTextureFlightResources(const NativeTex
 }
 
 void Gta4NativeGraphicsSystem::StageNativeSurfaceFlightResources(const NativeSurfaceImage& image) {
+  if (!IsNativeFlightRecorderEnabled()) return;
   StageNativeFlightResource(NativeFlightResourceKind::kSurfaceImage,
                             NativeVulkanHandleIdentity(image.resource.image),
                             image.descriptor.handle, image.materialized_serial);
@@ -9624,6 +9626,7 @@ bool Gta4NativeGraphicsSystem::EnsureFrameConstantArenaCapacity() {
     }
     DestroyNativeUploadBuffer(arena.storage);
     arena.storage = replacement;
+    arena.shared_allocation_memo.Reset();
     arena.uploads.ResetStorage();
     // Reads from write-combined/uncached upload heaps can be very expensive.
     // Preserve full sequential writes if cached memory was unavailable.
@@ -9735,6 +9738,8 @@ bool Gta4NativeGraphicsSystem::ResetFrameConstantArena(uint32_t slot, uint64_t c
   }
   const bool index_reset = unsubmitted ? arena.index.ResetUnsubmitted()
                                        : arena.index.ResetAfterCompletion(completed_submission);
+  // Invalidate even if a later reset step fails after releasing reservations.
+  if (index_reset) arena.shared_allocation_memo.Reset();
   if (!index_reset || !arena.shared_versions.ResetGeneration() ||
       !ResetImmutableBindings(arena)) {
     return false;
@@ -23562,8 +23567,13 @@ bool Gta4NativeGraphicsSystem::BindCommonDrawState(
     constant_arena.last_shared_key = shared_key;
     constant_arena.last_shared_identity = *shared_identity;
   }
-  if (!FindFrameConstantBuffer(NativeConstantBufferKind::kShared, *shared_identity,
-                               shared_constants_allocation)) {
+  const NativeUploadAllocation* remembered_allocation =
+      REXCVAR_GET(gta4_native_shared_key_memo)
+          ? constant_arena.shared_allocation_memo.Find(*shared_identity) : nullptr;
+  if (remembered_allocation) {
+    shared_constants_allocation = *remembered_allocation;
+  } else if (!FindFrameConstantBuffer(NativeConstantBufferKind::kShared, *shared_identity,
+                                      shared_constants_allocation)) {
     NativeSharedConstants shared_constants{};
     shared_constants.modern_effects = BuildModernEffectConstants(
         shared_key.modern_effects_enabled, shared_key.tone_lut_address, command.environmental_data.get());
@@ -23629,6 +23639,10 @@ bool Gta4NativeGraphicsSystem::BindCommonDrawState(
                                         shared_bytes, false, shared_constants_allocation)) {
       return false;
     }
+  }
+
+  if (!remembered_allocation) {
+    constant_arena.shared_allocation_memo.Store(*shared_identity, shared_constants_allocation);
   }
 
   static const bool trace_glass_output = [] {
@@ -23697,41 +23711,26 @@ bool Gta4NativeGraphicsSystem::BindCommonDrawState(
                                 draw_pipeline_layout, 0, kDescriptorSetCount,
                                 draw_descriptor_sets.data(), 0, nullptr); });
   }
-  const float viewport_scale_x = logical_width ? float(width) / float(logical_width) : 1.0f;
-  const float viewport_scale_y = logical_height ? float(height) / float(logical_height) : 1.0f;
-  const NativeViewportSelection viewport_selection = SelectNativeViewport(
-      {requested_viewport_x, requested_viewport_y, requested_viewport_width,
-       requested_viewport_height, requested_min_depth, requested_max_depth},
-      viewport_scale_x, viewport_scale_y, width, height,
-      vulkan_provider->vulkan_device()->properties());
+  const auto& raster_limits = vulkan_provider->vulkan_device()->properties();
+  const NativeRasterAreaKey raster_key{
+      fixed.viewport_bits, fixed.scissor, width, height, logical_width, logical_height,
+      {raster_limits.maxViewportDimensions[0], raster_limits.maxViewportDimensions[1]},
+      {std::bit_cast<uint32_t>(raster_limits.viewportBoundsRange[0]),
+       std::bit_cast<uint32_t>(raster_limits.viewportBoundsRange[1])},
+      REXCVAR_GET(gta4_native_debug_gpu_attribution) == 1};
+  const NativeRasterArea& raster_area = native_raster_area_memo_.Get(
+      raster_key, [&] { return ComputeNativeRasterArea(raster_key); });
+  const NativeViewportSelection& viewport_selection = raster_area.viewport;
   const VkViewport& viewport = viewport_selection.viewport;
+  const float viewport_scale_x = raster_area.scale_x;
+  const float viewport_scale_y = raster_area.scale_y;
   if (native_draw_state_cache_.UpdateViewport(
           {std::bit_cast<uint32_t>(viewport.x), std::bit_cast<uint32_t>(viewport.y),
            std::bit_cast<uint32_t>(viewport.width), std::bit_cast<uint32_t>(viewport.height),
            std::bit_cast<uint32_t>(viewport.minDepth), std::bit_cast<uint32_t>(viewport.maxDepth)})) {
     profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetViewport(command_buffer, 0, 1, &viewport); });
   }
-  VkRect2D scissor{};
-  // GTA IV's XDK setters already intersect the D3D scissor and viewport and
-  // write the final PA_SC_WINDOW_SCISSOR rectangle. Replay that authoritative
-  // hardware result instead of rebuilding the intersection from API shadows.
-  const int32_t logical_left =
-      std::clamp(fixed.scissor[0], int32_t(0), int32_t(logical_width));
-  const int32_t logical_top =
-      std::clamp(fixed.scissor[1], int32_t(0), int32_t(logical_height));
-  const int32_t logical_right =
-      std::clamp(fixed.scissor[2], logical_left, int32_t(logical_width));
-  const int32_t logical_bottom =
-      std::clamp(fixed.scissor[3], logical_top, int32_t(logical_height));
-  const int32_t left = ScaleCoordinateFloor(logical_left, logical_width, width);
-  const int32_t top = ScaleCoordinateFloor(logical_top, logical_height, height);
-  const int32_t right = ScaleCoordinateCeil(logical_right, logical_width, width);
-  const int32_t bottom = ScaleCoordinateCeil(logical_bottom, logical_height, height);
-  scissor.offset = {left, top};
-  scissor.extent = {uint32_t(right - left), uint32_t(bottom - top)};
-  if (viewport_selection.empty || REXCVAR_GET(gta4_native_debug_gpu_attribution) == 1) {
-    scissor = {};
-  }
+  const VkRect2D& scissor = raster_area.scissor;
   if (native_draw_state_cache_.UpdateScissor(
           {scissor.offset.x, scissor.offset.y, scissor.extent.width, scissor.extent.height})) {
     profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetScissor(command_buffer, 0, 1, &scissor); });
@@ -23818,11 +23817,11 @@ bool Gta4NativeGraphicsSystem::BindCommonDrawState(
           else dfn.vkCmdSetStencilWriteMask(command_buffer, faces, value);
         });
       });
-  const NativeBlendConstantSelection blend_constants = SelectNativeBlendConstants(
-      fixed.blend_controls, NativeBlendWriteMask(target.color_write_mask, target.color_formats),
-      fixed.blend_constants,
-      !vulkan_provider->vulkan_device()->properties().portabilitySubset ||
-          vulkan_provider->vulkan_device()->properties().constantAlphaColorBlendFactors);
+  const bool constant_alpha_supported = !raster_limits.portabilitySubset ||
+                                         raster_limits.constantAlphaColorBlendFactors;
+  const NativeBlendConstantSelection blend_constants = SelectNativeDrawBlendConstants(
+      fixed.blend_controls, target.color_write_mask, target.color_formats,
+      fixed.blend_constants, constant_alpha_supported);
   if (!blend_constants.representable) {
     return false;
   }

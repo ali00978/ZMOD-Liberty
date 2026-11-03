@@ -161,6 +161,11 @@ jobs:
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" --install "ndk;$NDK_VER" "platforms;android-35" "build-tools;35.0.0"
 
+      - name: Replay G925 draw preparation with NDK Vulkan headers
+        env:
+          G925_TEST_CXX: clang++
+        run: python tools/test_g925_draw_preparation_v211.py
+
       - name: Restore build cache
         id: cache
         uses: actions/cache/restore@v4

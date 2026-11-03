@@ -65,6 +65,7 @@
 #include "native_binding_policy.h"
 #include "native_descriptor_backend.h"
 #include "native_draw_state_cache.h"
+#include "native_draw_preparation.h"
 #include "native_frame_context.h"
 #include "native_frame_scheduling.h"
 #include "native_gpu_attribution.h"
@@ -1441,6 +1442,7 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
     // usually share them. Valid until the arena resets (identities restart).
     NativeSharedConstantSemanticKey last_shared_key{};
     uint64_t last_shared_identity = 0;
+    NativeExactMemo<uint64_t, NativeUploadAllocation> shared_allocation_memo;
   };
 
   enum class NativeUploadKind : uint8_t {
@@ -2601,6 +2603,7 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
   bool native_descriptor_layouts_update_after_bind_ = false;
   uint32_t native_descriptor_maximum_page_count_ = 0;
   NativeDrawStateCache<2> native_draw_state_cache_;
+  NativeRasterAreaMemo native_raster_area_memo_;
   NativeDescriptorSlotHandle native_null_image_descriptor_{};
   NativeDescriptorSlotHandle native_null_sampler_descriptor_{};
   uint32_t active_descriptor_copy_ = 0;

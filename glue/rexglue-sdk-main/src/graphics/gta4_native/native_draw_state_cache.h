@@ -28,9 +28,11 @@ class NativeDrawStateCache {
       depth_bias_ = {};
       stencil_ = {};
       blend_constants_ = {};
+      push_constants_ = {};
     }
-    // Keep the conservative push-constant/layout compatibility rule.
-    push_constants_ = {};
+    // A pipeline bind does not erase push constants. Native draws may retain
+    // them; UpdatePushConstants still requires the exact same layout and all
+    // three addresses. External paths retain conservative invalidation.
     return true;
   }
 
