@@ -33,6 +33,6 @@ assert 'new Intent(Intent.ACTION_SEND)' in java
 assert 'recent.size() > 240' in java
 assert 'play for 2 minutes' in java
 assert 'kNativeTextureEvictionGraceFrames = 240;' in old
-assert 'branches: [feature/g925-batched-render-cpu-v25]' in workflow
+assert 'branches: [feature/g925-stable-16ms-v26]' in workflow
 assert "github.event_name == 'push'" in workflow
 print("PASS: demanded pipeline priority, capacity rejection and stock Mali renderer preserved")
