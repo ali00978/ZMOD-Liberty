@@ -29,6 +29,8 @@ final class G925NativeProfileReport {
         {"cpu_command_recording_ms", "Native command recording"},
         {"counter_surface_lookup_reuses", "Surface lookup reuses / frame"},
         {"counter_vertex_layout_reuses", "Vertex layout reuses / frame"},
+        {"counter_converted_index_upload_reuses", "Converted index uploads reused / frame"},
+        {"counter_plain_index_uploads_skipped", "Unused original index uploads skipped / frame"},
         {"cpu_command_finalize_ms", "Native command finalize"},
         {"cpu_texture_preparation_ms", "Native texture preparation"},
         {"cpu_render_callback_ms", "Native render callback"},

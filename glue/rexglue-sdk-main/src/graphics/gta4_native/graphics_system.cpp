@@ -2521,7 +2521,7 @@ VkPrimitiveTopology ConvertPrimitiveTopology(uint32_t primitive_type) {
 }
 
 constexpr uint32_t GetQuadListTriangleListIndexCount(uint32_t quad_list_index_count) {
-  return (quad_list_index_count / 4) * 6;
+  return NativeQuadIndexCount(quad_list_index_count);
 }
 
 uint32_t ConvertVertexUsageToLocation(uint8_t usage, uint8_t usage_index) {
@@ -22891,6 +22891,23 @@ VkPipeline Gta4NativeGraphicsSystem::GetOrCreatePipeline(
   return PublishNativePipeline(key, pipeline, 0);
 }
 
+const std::vector<uint8_t>& Gta4NativeGraphicsSystem::PrepareHostIndexData(
+    const NativeBufferResource& resource, bool index32) {
+  std::vector<uint8_t>& host_payload =
+      index32 ? resource.host_index32_payload : resource.host_index16_payload;
+  if (host_payload.empty()) {
+    host_payload.resize(resource.payload.size());
+    profile::CpuCall(profile::CpuOp::kIndexConvert, [&] { return CopyGuestIndicesToHost(host_payload.data(), resource.payload.data(),
+                           resource.payload.size(), index32); });
+    RecordNativeMemoryLifecycle(
+        memory::ResourceKind::kIndexConversion, memory::LifecycleAction::kCreate,
+        memory::LifecycleReason::kCacheMiss, resource.handle, resource.generation,
+        resource.handle, host_payload.size(), host_payload.capacity(), 0, active_texture_frame_,
+        index32 ? 32 : 16);
+  }
+  return host_payload;
+}
+
 bool Gta4NativeGraphicsSystem::UploadBufferResource(
     const std::shared_ptr<const NativeBufferResource>& resource, VkCommandBuffer command_buffer,
     bool index_buffer, bool index32, const NativePipelineState* vertex_state,
@@ -22929,18 +22946,7 @@ bool Gta4NativeGraphicsSystem::UploadBufferResource(
       allocation = *existing;
       return true;
     }
-    std::vector<uint8_t>& host_payload =
-        index32 ? resource->host_index32_payload : resource->host_index16_payload;
-    if (host_payload.empty()) {
-      host_payload.resize(resource->payload.size());
-      profile::CpuCall(profile::CpuOp::kIndexConvert, [&] { return CopyGuestIndicesToHost(host_payload.data(), resource->payload.data(),
-                             resource->payload.size(), index32); });
-      RecordNativeMemoryLifecycle(
-          memory::ResourceKind::kIndexConversion, memory::LifecycleAction::kCreate,
-          memory::LifecycleReason::kCacheMiss, resource->handle, resource->generation,
-          resource->handle, host_payload.size(), host_payload.capacity(), 0, active_texture_frame_,
-          index32 ? 32 : 16);
-    }
+    const auto& host_payload = PrepareHostIndexData(*resource, index32);
     NativePersistentBufferKey persistent_key{};
     persistent_key.generation = resource->generation;
     persistent_key.kind =
@@ -24596,30 +24602,18 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
   if (required_size > command.index_buffer->payload.size()) {
     return fail("index-bounds");
   }
-  NativeUploadAllocation index_allocation;
-  if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kTriangleFan)) {
-    auto& host = index32 ? command.index_buffer->host_index32_payload
-                         : command.index_buffer->host_index16_payload;
-    if (host.empty()) {
-      host.resize(command.index_buffer->payload.size());
-      CopyGuestIndicesToHost(host.data(), command.index_buffer->payload.data(), host.size(), index32);
-    }
-    // The original fan is a CPU input, not a second GPU index buffer.
-    index_allocation.host_data = host.data();
-  } else if (!UploadBufferResource(command.index_buffer, command_buffer, true, index32, nullptr, 0,
-                                   resources, index_allocation)) {
-    return fail("index-upload");
-  }
-
+  // Materialize CPU words once, but upload the original buffer only if it
+  // remains the selected GPU source after conversion/reordering below.
+  const auto& host_indices = PrepareHostIndexData(*command.index_buffer, index32);
   NativeUploadAllocation quad_list_indices;
   NativeUploadAllocation primitive_restart_indices;
   std::shared_ptr<const std::vector<uint8_t>> fan_indices;
   const uint8_t* selected_index_bytes =
-      index_allocation.host_data + size_t(draw.start_index) * size_t(element_size);
+      host_indices.data() + size_t(draw.start_index) * size_t(element_size);
   uint32_t host_index_count = draw.index_count;
   uint32_t host_start_index = draw.start_index;
-  VkBuffer host_index_buffer = index_allocation.buffer;
-  VkDeviceSize host_index_offset = index_allocation.offset;
+  VkBuffer host_index_buffer = VK_NULL_HANDLE;
+  VkDeviceSize host_index_offset = 0;
   if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kTriangleFan)) {
     const NativeTriangleFanKey fan_key{draw.start_index, draw.index_count,
         draw.primitive_restart_index, index32, guest_restart_enabled};
@@ -24657,34 +24651,21 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
     }
     host_index_count = GetQuadListTriangleListIndexCount(draw.index_count);
     const VkDeviceSize expanded_size = VkDeviceSize(host_index_count) * element_size;
-    if (!host_index_count || !AllocateUpload(expanded_size, size_t(element_size), quad_list_indices,
-                                             NativeUploadKind::kIndex)) {
-      return fail("quad-list-upload-allocation");
-    }
-    if (index32) {
-      const uint32_t* source = reinterpret_cast<const uint32_t*>(selected_index_bytes);
-      uint32_t* destination = reinterpret_cast<uint32_t*>(quad_list_indices.mapping);
-      for (uint32_t quad = 0; quad < draw.index_count / 4; ++quad) {
-        const uint32_t* vertices = source + quad * 4;
-        *(destination++) = vertices[0];
-        *(destination++) = vertices[1];
-        *(destination++) = vertices[2];
-        *(destination++) = vertices[0];
-        *(destination++) = vertices[2];
-        *(destination++) = vertices[3];
-      }
+    const NativeConvertedIndexKey key{command.index_buffer->generation, draw.start_index,
+        draw.index_count, 0, 0, NativeIndexConversion::kQuads, index32};
+    if (!host_index_count) return fail("quad-list-count-overflow");
+    if (const auto* cached = resources.converted_index_uploads.Find(key)) {
+      quad_list_indices = *cached;
+      AddNativeGpuProfileCounter(performance::Counter::kConvertedIndexUploadReuses);
     } else {
-      const uint16_t* source = reinterpret_cast<const uint16_t*>(selected_index_bytes);
-      uint16_t* destination = reinterpret_cast<uint16_t*>(quad_list_indices.mapping);
-      for (uint32_t quad = 0; quad < draw.index_count / 4; ++quad) {
-        const uint16_t* vertices = source + quad * 4;
-        *(destination++) = vertices[0];
-        *(destination++) = vertices[1];
-        *(destination++) = vertices[2];
-        *(destination++) = vertices[0];
-        *(destination++) = vertices[2];
-        *(destination++) = vertices[3];
-      }
+      if (!AllocateUpload(expanded_size, size_t(element_size), quad_list_indices,
+                          NativeUploadKind::kIndex) ||
+          !profile::CpuCall(profile::CpuOp::kIndexConvert, [&] {
+            return WriteNativeConvertedIndices(host_indices, key,
+                {quad_list_indices.mapping, size_t(expanded_size)});
+          })) return fail("quad-list-upload-allocation");
+      if (!resources.converted_index_uploads.Insert(key, quad_list_indices))
+        return fail("quad-list-upload-cache");
     }
     selected_index_bytes = quad_list_indices.mapping;
     host_start_index = 0;
@@ -24779,30 +24760,35 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
   }
   if (guest_restart_enabled && draw.primitive_type != uint32_t(xenos::PrimitiveType::kTriangleFan)) {
     const VkDeviceSize restart_size = VkDeviceSize(host_index_count) * element_size;
-    if (!AllocateUpload(restart_size, size_t(element_size), primitive_restart_indices,
-                        NativeUploadKind::kIndex)) {
-      return fail("primitive-restart-upload-allocation");
-    }
-    if (index32) {
-      const uint32_t* source = reinterpret_cast<const uint32_t*>(selected_index_bytes);
-      uint32_t* destination = reinterpret_cast<uint32_t*>(primitive_restart_indices.mapping);
-      for (uint32_t index = 0; index < host_index_count; ++index) {
-        const uint32_t value = source[index];
-        destination[index] =
-            (value & xenos::kVertexIndexMask) == draw.primitive_restart_index ? UINT32_MAX : value;
-      }
+    const NativeConvertedIndexKey key{command.index_buffer->generation, draw.start_index,
+        draw.index_count, draw.primitive_restart_index, xenos::kVertexIndexMask,
+        NativeIndexConversion::kRestart, index32};
+    if (const auto* cached = resources.converted_index_uploads.Find(key)) {
+      primitive_restart_indices = *cached;
+      AddNativeGpuProfileCounter(performance::Counter::kConvertedIndexUploadReuses);
     } else {
-      const uint16_t* source = reinterpret_cast<const uint16_t*>(selected_index_bytes);
-      uint16_t* destination = reinterpret_cast<uint16_t*>(primitive_restart_indices.mapping);
-      const uint16_t guest_restart_index = uint16_t(draw.primitive_restart_index);
-      for (uint32_t index = 0; index < host_index_count; ++index) {
-        destination[index] = source[index] == guest_restart_index ? UINT16_MAX : source[index];
-      }
+      if (!AllocateUpload(restart_size, size_t(element_size), primitive_restart_indices,
+                          NativeUploadKind::kIndex) ||
+          !profile::CpuCall(profile::CpuOp::kIndexConvert, [&] {
+            return WriteNativeConvertedIndices(host_indices, key,
+                {primitive_restart_indices.mapping, size_t(restart_size)});
+          })) return fail("primitive-restart-upload-allocation");
+      if (!resources.converted_index_uploads.Insert(key, primitive_restart_indices))
+        return fail("primitive-restart-upload-cache");
     }
     selected_index_bytes = primitive_restart_indices.mapping;
     host_start_index = 0;
     host_index_buffer = primitive_restart_indices.buffer;
     host_index_offset = primitive_restart_indices.offset;
+  }
+  if (!host_index_buffer) {
+    NativeUploadAllocation index_allocation;
+    if (!UploadBufferResource(command.index_buffer, command_buffer, true, index32, nullptr, 0,
+                              resources, index_allocation)) return fail("index-upload");
+    host_index_buffer = index_allocation.buffer;
+    host_index_offset = index_allocation.offset;
+  } else if (draw.primitive_type != uint32_t(xenos::PrimitiveType::kTriangleFan)) {
+    AddNativeGpuProfileCounter(performance::Counter::kPlainIndexUploadsSkipped);
   }
   const bool collect_indexed_diagnostics =
       CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeTrace) ||

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "native_triangle_fan.h"
+#include "native_index_conversion.h"
 #include "native_vertex_cache.h"
 #include "native_persistent_buffer_map.h"
 #include "native_deferred_release.h"
@@ -1471,11 +1472,13 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
   struct NativeFrameResources {
     FrameGenerationMap<NativePersistentBufferKey, NativeUploadAllocation, NativePersistentBufferKeyHash> vertex_uploads;
     FrameGenerationMap<uint64_t, NativeUploadAllocation> index16_uploads, index32_uploads;
+    FrameGenerationMap<NativeConvertedIndexKey, NativeUploadAllocation, NativeConvertedIndexKeyHash>
+        converted_index_uploads;
     bool Reset() {
       if (!vertex_uploads.CanResetGeneration() || !index16_uploads.CanResetGeneration() ||
-          !index32_uploads.CanResetGeneration()) return false;
+          !index32_uploads.CanResetGeneration() || !converted_index_uploads.CanResetGeneration()) return false;
       return vertex_uploads.ResetGeneration() && index16_uploads.ResetGeneration() &&
-             index32_uploads.ResetGeneration();
+             index32_uploads.ResetGeneration() && converted_index_uploads.ResetGeneration();
     }
   };
 
@@ -1888,6 +1891,7 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
   void TryPrewarmDrawPipeline(const NativeCommand& command);
   bool GetRequiredVertexStreams(const NativePipelineState& state,
                                 uint32_t& required_streams);
+  const std::vector<uint8_t>& PrepareHostIndexData(const NativeBufferResource& resource, bool index32);
   bool UploadBufferResource(const std::shared_ptr<const NativeBufferResource>& resource,
                             VkCommandBuffer command_buffer, bool index_buffer, bool index32,
                             const NativePipelineState* vertex_state, uint32_t vertex_stream,

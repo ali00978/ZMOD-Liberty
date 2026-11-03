@@ -154,6 +154,8 @@ enum class Counter : uint8_t {
   kConstantBindingOwners,
   kSurfaceLookupReuses,
   kVertexLayoutReuses,
+  kConvertedIndexUploadReuses,
+  kPlainIndexUploadsSkipped,
   kCount,
 };
 
