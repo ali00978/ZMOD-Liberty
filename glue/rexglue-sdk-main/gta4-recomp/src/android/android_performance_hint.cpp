@@ -290,7 +290,17 @@ void StartPerformanceHint() {
           });
           hot.assign(selected.begin(), selected.end());
         }
-        if (!hot.empty() && hot != threads) {
+        // After a sustained idle/loading period the stable selector can
+        // legitimately have no live members left. Do not leave Android
+        // boosting stale thread IDs: close the session and recreate it only
+        // when frame-critical workers become active again.
+        if (hot.empty() && session) {
+          api.close(session);
+          session = nullptr;
+          session_target = 0;
+          threads.clear();
+          Log("no live frame workers; session closed", 0);
+        } else if (!hot.empty() && hot != threads) {
           if (session && api.set_threads &&
               api.set_threads(session, hot.data(), hot.size()) == 0) {
             threads = hot;
