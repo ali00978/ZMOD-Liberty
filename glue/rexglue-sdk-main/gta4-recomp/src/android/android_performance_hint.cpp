@@ -153,9 +153,11 @@ class BusyThreads {
     std::sort(critical.begin(), critical.end(), std::greater<>());
     std::sort(busy.begin(), busy.end(), std::greater<>());
     std::vector<pid_t> result;
+    critical_threads_.clear();
     for (const auto& [delta, tid] : critical) {
       if (result.size() == kMaxHintThreads) break;
       result.push_back(tid);
+      critical_threads_.push_back(tid);
     }
     for (const auto& [delta, tid] : busy) {
       if (result.size() == kMaxHintThreads) break;
@@ -165,7 +167,10 @@ class BusyThreads {
     return result;
   }
 
+  const std::vector<pid_t>& critical_threads() const { return critical_threads_; }
+
  private:
+  std::vector<pid_t> critical_threads_;
   std::unordered_map<pid_t, uint64_t> last_ticks_;
 };
 
@@ -287,7 +292,7 @@ void StartPerformanceHint() {
         if (steady) {
           const auto& selected = stable_threads.Select(hot, [](pid_t tid) {
             return access(("/proc/self/task/" + std::to_string(tid)).c_str(), F_OK) == 0;
-          });
+          }, busy.critical_threads());
           hot.assign(selected.begin(), selected.end());
         }
         // After a sustained idle/loading period the stable selector can

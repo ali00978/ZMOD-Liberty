@@ -20,6 +20,14 @@ on:
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/workflows/build-macos.yml'
       - '.github/workflows/repository-checks.yml'
+  # Build a child branch against the verified 2.6 base so GitHub permits
+  # restoring that base branch's compiler cache (sibling push builds cannot).
+  pull_request:
+    branches: [feature/g925-stable-16ms-v26]
+    types: [opened, synchronize, reopened]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   workflow_dispatch:
     inputs:
       gpu:
@@ -52,7 +60,7 @@ concurrency:
 
 jobs:
   apk:
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.build_mode != 'java-only') }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.build_mode != 'java-only') }}
     name: APK (${{ inputs.gpu || 'mali' }}, ${{ inputs.cpu || 'armv9' }})
     runs-on: windows-2022
     timeout-minutes: 360
@@ -72,6 +80,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Allow long paths
@@ -102,6 +111,16 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      - name: Select host C++ toolchain for executable regressions
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Run C++ state replay and Java profile regressions
+        env:
+          G925_TEST_CXX: clang++
+        run: |
+          python tools/test_g925_render_state_v27.py
+          python tools/test_g925_profile_report_v27.py
 
       - name: Install Android SDK platform and NDK r29
         run: |
@@ -154,8 +173,24 @@ jobs:
         shell: bash
         run: |
           if [ -n "${SCCACHE_PATH:-}" ]; then
-            "$SCCACHE_PATH" --show-stats || true
+            "$SCCACHE_PATH" --show-stats | tee sccache-stats.txt
+            "$SCCACHE_PATH" --show-stats --stats-format=json > sccache-stats.json
+            {
+              echo '### C++ compiler cache'
+              echo '```text'
+              cat sccache-stats.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Upload compiler cache statistics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: g925-build-cache-statistics
+          path: sccache-stats.*
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Save build cache
         if: always() && steps.cache.outputs.cache-hit != 'true'

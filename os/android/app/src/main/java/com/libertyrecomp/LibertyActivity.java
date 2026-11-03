@@ -369,6 +369,11 @@ public class LibertyActivity extends SDLActivity {
         // config, so this also recovers installs that already picked it.
         arguments.add("--gpu_plugin=gta4-native");
         mArguments = withoutDuplicateOptions(arguments).toArray(new String[0]);
+        if (nativeProfile) {
+            getSharedPreferences("g925_native_profile", MODE_PRIVATE).edit()
+                    .putString("capture_settings", G925NativeProfileReport.captureAppliedSettings(
+                            dataRoot, Arrays.asList(mArguments))).commit();
+        }
         String driver = readFirstLine(new File(dataRoot, "driver.txt"));
         mDriverText = driver;
         String lower = driver == null ? "" : driver.toLowerCase(Locale.ROOT);

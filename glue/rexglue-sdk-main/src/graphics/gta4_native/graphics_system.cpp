@@ -19661,7 +19661,9 @@ bool Gta4NativeGraphicsSystem::PrepareFrameTextures(VkCommandBuffer command_buff
   uint32_t resolve_count = 0;
   uint32_t depth_handoff_count = 0;
   std::unordered_set<uint64_t> packed_alias_generations;
-  std::vector<NativeCommand*> texture_commands;
+  auto& texture_commands = frame_texture_commands_scratch_;
+  texture_commands.clear();
+  const auto clear_texture_scratch = MakeScopeExit([&] { texture_commands.clear(); });
   texture_commands.reserve(current_frame_.size());
   // The worker counted these while assembling; temporal prefilter draws are
   // added later on this thread, so frames with temporal output still walk.
@@ -23653,7 +23655,8 @@ bool Gta4NativeGraphicsSystem::BindCommonDrawState(
 #if REX_PLATFORM_ANDROID
   if (pipeline_stats_.ready()) pipeline_stats_.Observe(pipeline);
 #endif
-  if (native_draw_state_cache_.UpdatePipeline(NativeVulkanHandleIdentity(pipeline))) {
+  if (native_draw_state_cache_.UpdatePipeline(
+          NativeVulkanHandleIdentity(pipeline), /*all_tracked_state_dynamic=*/true)) {
     profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return dfn.vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline); });
   }
   std::array<uint64_t, kDescriptorSetCount> descriptor_identities{};
@@ -23774,32 +23777,19 @@ bool Gta4NativeGraphicsSystem::BindCommonDrawState(
   }
   const NativeStencilMaskRefState& effective_back_stencil =
       stencil_mask_ref.use_separate_faces ? stencil_mask_ref.back : stencil_mask_ref.front;
-  if (native_draw_state_cache_.UpdateStencil(
-          {stencil_mask_ref.front.reference, stencil_mask_ref.front.compare_mask,
-           stencil_mask_ref.front.write_mask, effective_back_stencil.reference,
-           effective_back_stencil.compare_mask, effective_back_stencil.write_mask})) {
-    if (stencil_mask_ref.use_separate_faces) {
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilReference(command_buffer, VK_STENCIL_FACE_FRONT_BIT,
-                                   stencil_mask_ref.front.reference); });
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilReference(command_buffer, VK_STENCIL_FACE_BACK_BIT,
-                                   stencil_mask_ref.back.reference); });
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilCompareMask(command_buffer, VK_STENCIL_FACE_FRONT_BIT,
-                                     stencil_mask_ref.front.compare_mask); });
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilCompareMask(command_buffer, VK_STENCIL_FACE_BACK_BIT,
-                                     stencil_mask_ref.back.compare_mask); });
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilWriteMask(command_buffer, VK_STENCIL_FACE_FRONT_BIT,
-                                   stencil_mask_ref.front.write_mask); });
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilWriteMask(command_buffer, VK_STENCIL_FACE_BACK_BIT,
-                                   stencil_mask_ref.back.write_mask); });
-    } else {
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilReference(command_buffer, VK_STENCIL_FACE_FRONT_AND_BACK,
-                                   stencil_mask_ref.front.reference); });
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilCompareMask(command_buffer, VK_STENCIL_FACE_FRONT_AND_BACK,
-                                     stencil_mask_ref.front.compare_mask); });
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilWriteMask(command_buffer, VK_STENCIL_FACE_FRONT_AND_BACK,
-                                   stencil_mask_ref.front.write_mask); });
-    }
-  }
+  native_draw_state_cache_.EmitStencilChanges(
+      {stencil_mask_ref.front.reference, stencil_mask_ref.front.compare_mask,
+       stencil_mask_ref.front.write_mask, effective_back_stencil.reference,
+       effective_back_stencil.compare_mask, effective_back_stencil.write_mask},
+      [&](size_t field, bool front, bool back, uint32_t value) {
+        const VkStencilFaceFlags faces =
+            (front ? VK_STENCIL_FACE_FRONT_BIT : 0) | (back ? VK_STENCIL_FACE_BACK_BIT : 0);
+        profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] {
+          if (field == 0) dfn.vkCmdSetStencilReference(command_buffer, faces, value);
+          else if (field == 1) dfn.vkCmdSetStencilCompareMask(command_buffer, faces, value);
+          else dfn.vkCmdSetStencilWriteMask(command_buffer, faces, value);
+        });
+      });
   const NativeBlendConstantSelection blend_constants = SelectNativeBlendConstants(
       fixed.blend_controls, NativeBlendWriteMask(target.color_write_mask, target.color_formats),
       fixed.blend_constants,
@@ -23958,7 +23948,7 @@ bool Gta4NativeGraphicsSystem::RecordPrimitiveUpBatch(
   const VkDeviceSize default_vertex_offset = 0;
   BindNativeVertexBuffer(command_buffer, kDefaultVertexBinding, default_vertex_buffer, default_vertex_offset);
   BindNativeVertexBuffer(command_buffer, 0, vertices.buffer, vertices.offset);
-  dfn.vkCmdBindIndexBuffer(command_buffer, indices.buffer, indices.offset, VK_INDEX_TYPE_UINT32);
+  BindNativeIndexBuffer(command_buffer, indices.buffer, indices.offset, VK_INDEX_TYPE_UINT32);
   ObserveNativeGpuProfileDraw(first, pipeline, target.samples, 0, uint32_t(index_count));
   if (REXCVAR_GET(gta4_native_debug_gpu_attribution) != 2) dfn.vkCmdDrawIndexed(command_buffer, uint32_t(index_count), 1, 0, 0, 0);
   TraceModernShaderDraw(first, target);
@@ -24290,7 +24280,7 @@ bool Gta4NativeGraphicsSystem::RecordPrimitiveUp(VkCommandBuffer command_buffer,
       profile::CpuCall(profile::CpuOp::kDriverDraw, [&] { if (!REXCVAR_GET(gta4_native_debug_gpu_attribution) || REXCVAR_GET(gta4_native_debug_gpu_attribution) == 1) dfn.vkCmdDraw(command_buffer, 4, 1, rectangle * 4, 0); });
     }
   } else if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kQuadList)) {
-    profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return dfn.vkCmdBindIndexBuffer(command_buffer, quad_list_indices.buffer, quad_list_indices.offset,
+    profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return BindNativeIndexBuffer(command_buffer, quad_list_indices.buffer, quad_list_indices.offset,
                              VK_INDEX_TYPE_UINT32); });
     ObserveNativeGpuProfileDraw(command, pipeline, target.samples, 0, quad_list_index_count);
     profile::CpuCall(profile::CpuOp::kDriverDraw, [&] { if (!REXCVAR_GET(gta4_native_debug_gpu_attribution) || REXCVAR_GET(gta4_native_debug_gpu_attribution) == 1) dfn.vkCmdDrawIndexed(command_buffer, quad_list_index_count, 1, 0, 0, 0); });
@@ -24302,7 +24292,7 @@ bool Gta4NativeGraphicsSystem::RecordPrimitiveUp(VkCommandBuffer command_buffer,
     if (!AllocateUpload(count * sizeof(uint32_t), alignof(uint32_t), indices, NativeUploadKind::kIndex) ||
         !WriteNativeSequentialFan({reinterpret_cast<uint32_t*>(indices.mapping), size_t(count)},
                                   host_vertex_count)) return fail("triangle-fan-upload");
-    dfn.vkCmdBindIndexBuffer(command_buffer, indices.buffer, indices.offset, VK_INDEX_TYPE_UINT32);
+    BindNativeIndexBuffer(command_buffer, indices.buffer, indices.offset, VK_INDEX_TYPE_UINT32);
     ObserveNativeGpuProfileDraw(command, pipeline, target.samples, 0, uint32_t(count));
     if (REXCVAR_GET(gta4_native_debug_gpu_attribution) != 2) dfn.vkCmdDrawIndexed(command_buffer, uint32_t(count), 1, 0, 0, 0);
   } else {
@@ -24444,7 +24434,7 @@ bool Gta4NativeGraphicsSystem::RecordPrimitive(VkCommandBuffer command_buffer,
       *(indices++) = vertex + 2;
       *(indices++) = vertex + 3;
     }
-    profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return dfn.vkCmdBindIndexBuffer(command_buffer, indices_allocation.buffer, indices_allocation.offset,
+    profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return BindNativeIndexBuffer(command_buffer, indices_allocation.buffer, indices_allocation.offset,
                              VK_INDEX_TYPE_UINT32); });
     ObserveNativeGpuProfileDraw(command, pipeline, target.samples, 0, index_count);
     profile::CpuCall(profile::CpuOp::kDriverDraw, [&] { if (!REXCVAR_GET(gta4_native_debug_gpu_attribution) || REXCVAR_GET(gta4_native_debug_gpu_attribution) == 1) dfn.vkCmdDrawIndexed(command_buffer, index_count, 1, 0, int32_t(draw.start_vertex), 0); });
@@ -24456,7 +24446,7 @@ bool Gta4NativeGraphicsSystem::RecordPrimitive(VkCommandBuffer command_buffer,
     if (!AllocateUpload(count * sizeof(uint32_t), alignof(uint32_t), indices, NativeUploadKind::kIndex) ||
         !WriteNativeSequentialFan({reinterpret_cast<uint32_t*>(indices.mapping), size_t(count)},
                                   draw.vertex_count, draw.start_vertex)) return fail("triangle-fan-upload");
-    dfn.vkCmdBindIndexBuffer(command_buffer, indices.buffer, indices.offset, VK_INDEX_TYPE_UINT32);
+    BindNativeIndexBuffer(command_buffer, indices.buffer, indices.offset, VK_INDEX_TYPE_UINT32);
     ObserveNativeGpuProfileDraw(command, pipeline, target.samples, 0, uint32_t(count));
     if (REXCVAR_GET(gta4_native_debug_gpu_attribution) != 2) dfn.vkCmdDrawIndexed(command_buffer, uint32_t(count), 1, 0, 0, 0);
   } else {
@@ -24465,6 +24455,17 @@ bool Gta4NativeGraphicsSystem::RecordPrimitive(VkCommandBuffer command_buffer,
   }
   TraceModernShaderDraw(command, target);
   return true;
+}
+
+void Gta4NativeGraphicsSystem::BindNativeIndexBuffer(VkCommandBuffer command_buffer,
+                                                     VkBuffer buffer, VkDeviceSize offset,
+                                                     VkIndexType index_type) {
+  if (!native_draw_state_cache_.UpdateIndexBuffer(
+          NativeVulkanHandleIdentity(command_buffer), NativeVulkanHandleIdentity(buffer),
+          uint64_t(offset), uint32_t(index_type))) return;
+  auto* vulkan_provider = static_cast<ui::vulkan::VulkanProvider*>(provider_.get());
+  vulkan_provider->vulkan_device()->functions().vkCmdBindIndexBuffer(
+      command_buffer, buffer, offset, index_type);
 }
 
 void Gta4NativeGraphicsSystem::BindNativeVertexBuffer(VkCommandBuffer command_buffer,
@@ -25056,7 +25057,7 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
     }
   }
 
-  profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return dfn.vkCmdBindIndexBuffer(command_buffer, host_index_buffer, host_index_offset, bound_index_type); });
+  profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return BindNativeIndexBuffer(command_buffer, host_index_buffer, host_index_offset, bound_index_type); });
   if (IsHoveGantryGeometryCandidate(command)) {
     static std::atomic<uint64_t> hove_recorded_draw_count{0};
     const uint64_t hit = ++hove_recorded_draw_count;

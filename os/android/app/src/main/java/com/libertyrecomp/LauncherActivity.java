@@ -959,6 +959,16 @@ public class LauncherActivity extends Activity {
                     new String[] {"kernel_spinlock_spins"},
                     new String[] {"Default", "Minimal", "Short", "Normal", "Long"},
                     new String[] {"4", "16", "64", "256"}),
+            new GraphicsSetting("Automatic draw distance",
+                    "Adaptive mode can reduce your chosen draw distance. Fixed keeps it unchanged.",
+                    new String[] {"gta4_dynamic_draw_distance"},
+                    new String[] {"Default", "Fixed (keep quality)", "Adaptive"},
+                    new String[] {"false", "true"}),
+            new GraphicsSetting("Reflection FPS guard",
+                    "May refresh reflections less often below 30 FPS. Off keeps the selected rate.",
+                    new String[] {"gta4_fps_guard"},
+                    new String[] {"Default", "Off (keep quality)", "Adaptive"},
+                    new String[] {"0", "2"}),
             new GraphicsSetting("Heat guard",
                     "Lowers the draw distance a little before the phone overheats and restores "
                             + "it once it cools, for steadier clocks instead of throttling",
@@ -1134,6 +1144,8 @@ public class LauncherActivity extends Activity {
             case "CPU response pacing":
             case "CPU hint thread stability":
             case "Android CPU performance hints":
+            case "Automatic draw distance":
+            case "Reflection FPS guard":
             case "Heat guard":
             case "Thread waiting":
                 return 1;

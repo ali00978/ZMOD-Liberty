@@ -46,44 +46,82 @@ final class G925NativeProfileReport {
         {"android_performance_hint_stable_threads", "Stable CPU hint threads"},
         {"gta4_frame_limit", "Launcher frame cap"},
         {"gta4_output_height_cap", "Launcher output height"},
-        {"gta4_native_anti_aliasing", "Launcher anti-aliasing"}
+        {"gta4_native_anti_aliasing", "Launcher anti-aliasing"},
+        {"gta4_draw_distance_scale", "Draw distance scale"},
+        {"gta4_dynamic_draw_distance", "Automatic draw distance reduction"},
+        {"gta4_dynamic_draw_distance_min", "Automatic draw distance floor"},
+        {"android_thermal_guard", "App heat guard (reduces draw distance)"},
+        {"gta4_fps_guard", "FPS guard (reduces reflection frequency)"},
+        {"gta4_native_shadow_interval", "Shadow refresh interval"},
+        {"gta4_native_water_reflection_interval", "Water reflection refresh interval"},
+        {"gta4_native_environment_reflection_interval", "Environment reflection refresh interval"}
     };
+
+    private static void readSetting(Map<String, String> values, String line, boolean argument) {
+        line = line.trim();
+        int comment = line.indexOf('#');
+        if (comment >= 0) line = line.substring(0, comment).trim();
+        int equals = line.indexOf('=');
+        if (equals <= 0 || (argument && !line.startsWith("--"))) return;
+        String key = line.substring(argument ? 2 : 0, equals).trim().replace("\"", "");
+        String value = line.substring(equals + 1).trim().replace("\"", "");
+        for (String[] setting : CAPTURE_SETTINGS) {
+            if (setting[0].equals(key) && value.matches("[a-zA-Z0-9_.-]{1,32}")) {
+                values.put(key, value);
+                return;
+            }
+        }
+    }
+
+    private static void readSettingsFile(Map<String, String> values, File file, boolean argument) {
+        if (!file.isFile()) return;
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                new FileInputStream(file), StandardCharsets.UTF_8))) {
+            String line;
+            int lines = 0;
+            while (lines++ < 2000 && (line = reader.readLine()) != null) {
+                readSetting(values, line, argument);
+            }
+        } catch (IOException ignored) {
+            // A missing config must not prevent launching or sharing the capture.
+        }
+    }
 
     static String captureSettings(File root) {
         Map<String, String> values = new LinkedHashMap<>();
         if (root != null) {
             for (String fileName : new String[] {"args.txt", "graphics.txt"}) {
-                File file = new File(root, fileName);
-                if (!file.isFile()) continue;
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                        new FileInputStream(file), StandardCharsets.UTF_8))) {
-                    String line;
-                    int lines = 0;
-                    while (lines++ < 2000 && (line = reader.readLine()) != null) {
-                        line = line.trim();
-                        int equals = line.indexOf('=');
-                        if (!line.startsWith("--") || equals <= 2) continue;
-                        String key = line.substring(2, equals);
-                        boolean allowed = false;
-                        for (String[] setting : CAPTURE_SETTINGS) {
-                            if (setting[0].equals(key)) { allowed = true; break; }
-                        }
-                        if (!allowed) continue;
-                        String value = line.substring(equals + 1).trim();
-                        // Only small, simple settings values are shareable.
-                        if (value.matches("[a-zA-Z0-9_.-]{1,32}")) values.put(key, value);
-                    }
-                } catch (IOException ignored) {
-                    // The report still works when configuration is unavailable.
-                }
+                readSettingsFile(values, new File(root, fileName), true);
             }
         }
+        return formatSettings(values, "Launch-time config (explicit launcher/args overrides only):");
+    }
+
+    // Called AFTER performance-test Intent overrides and option deduplication.
+    // Saved native values are lower priority than these actual launch arguments.
+    static String captureAppliedSettings(File root, List<String> arguments) {
+        Map<String, String> values = new LinkedHashMap<>();
+        if (root != null) {
+            readSettingsFile(values, new File(new File(root, "LibertyRecomp"), "native.toml"), false);
+        }
+        for (String argument : arguments) readSetting(values, argument, true);
+        return formatSettings(values,
+                "Launch-time config (saved native config + final applied overrides):");
+    }
+
+    private static String formatSettings(Map<String, String> values, String heading) {
         StringBuilder snapshot = new StringBuilder();
-        snapshot.append("Launch-time config (explicit launcher/args overrides only):\n");
+        snapshot.append(heading).append('\n');
         for (String[] setting : CAPTURE_SETTINGS) {
             snapshot.append(setting[1]).append(": ")
                     .append(values.getOrDefault(setting[0], "default / in-game"))
                     .append('\n');
+        }
+        if ("true".equals(values.get("gta4_dynamic_draw_distance"))
+                || "true".equals(values.get("android_thermal_guard"))
+                || Arrays.asList("1", "2", "3").contains(values.get("gta4_fps_guard"))) {
+            snapshot.append("Quality note: automatic reductions are enabled; ")
+                    .append("draw distance or reflection frequency may change during this run.\n");
         }
         snapshot.append("16 ms CPU feedback is NOT an FPS cap; in-game options may differ.\n");
         return snapshot.toString();
