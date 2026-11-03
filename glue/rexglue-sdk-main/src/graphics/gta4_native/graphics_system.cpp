@@ -37540,6 +37540,7 @@ bool Gta4NativeGraphicsSystem::ClearGuestOutput(
         bool(present_source), present_source ? present_source->generation : 0);
   }
 
+  std::optional<profile::CpuScope> producer_wait_scope;
   const bool refresh_result = presenter_->RefreshGuestOutput(
       width, height, display_width, display_height,
       [this, vulkan_device, width, height, submitted_frame, present_source, environmental_data,
@@ -38244,6 +38245,9 @@ bool Gta4NativeGraphicsSystem::ClearGuestOutput(
       ui::GuestOutputProvenance{
           .frame_rate_limit = rex::cvar::Query<uint32_t>("gta4_frame_limit"),
           .producer_backpressure = present.device != 0,
+#if REX_PLATFORM_ANDROID
+          .producer_render_ahead = true,
+#endif
           .tv_session_id = present.diagnostic_tv_session_id,
           .title_present_id = present.diagnostic_present_id,
           .selected_generation = present_source ? present_source->generation : 0,
@@ -38258,6 +38262,10 @@ bool Gta4NativeGraphicsSystem::ClearGuestOutput(
           .native_command_count = uint32_t(current_frame_.size()),
           .tv_bink_result = present.diagnostic_tv_bink_result,
           .diagnostic_trace = present.diagnostic_trace != 0,
+      },
+      [&](bool waiting) {
+        if (waiting) producer_wait_scope.emplace(profile::CpuOp::kPresenterWait);
+        else producer_wait_scope.reset();
       });
   return refresh_result;
 }

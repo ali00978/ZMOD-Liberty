@@ -610,7 +610,8 @@ bool Presenter::RefreshGuestOutput(
     uint32_t frontbuffer_width, uint32_t frontbuffer_height, uint32_t display_aspect_ratio_x,
     uint32_t display_aspect_ratio_y,
     std::function<bool(GuestOutputRefreshContext& context)> refresher,
-    GuestOutputProvenance provenance) {
+    GuestOutputProvenance provenance,
+    const std::function<void(bool)>& producer_wait_observer) {
   GuestOutputProperties& writable_properties =
       guest_output_properties_[guest_output_mailbox_writable_];
   writable_properties.frontbuffer_width = frontbuffer_width;
@@ -662,6 +663,22 @@ bool Presenter::RefreshGuestOutput(
     guest_output_active_last_refresh_ = false;
   }
 
+  const bool on_ui_thread = std::this_thread::get_id() == ui_thread_id_;
+  const auto wait_for_publication = [&](uint64_t serial) {
+    if (producer_wait_observer) producer_wait_observer(true);
+    const bool trace_wait = rex::diagnostics::IsEnabled(rex::diagnostics::Category::kPresenter);
+    const uint64_t begin = trace_wait ? FramePacerNowNs() : 0;
+    const bool accepted = frame_publication_gate_.Wait(serial);
+    if (trace_wait) {
+      REXLOG_INFO("FramePacer point=handoff serial={} frame={} released={} wait-ns={}",
+                  serial, provenance.submitted_frame, accepted, FramePacerNowNs()-begin);
+    }
+    if (producer_wait_observer) producer_wait_observer(false);
+  };
+  // The callback has submitted this writable image and released its image
+  // access lock. Retire the prior publication before rotating the mailbox,
+  // with no presenter, queue, resource or UI lock held.
+  frame_publication_pipeline_.BeforePublish(on_ui_thread, wait_for_publication);
   const bool paired_presentation = is_active && writable_properties.provenance.paired_presentation;
   const uint64_t publication_serial = frame_publication_gate_.Publish(
       is_active ? provenance.frame_rate_limit : 0, paired_presentation);
@@ -869,17 +886,12 @@ bool Presenter::RefreshGuestOutput(
         paint_result_name(paint_result));
   }
   }
-  if (is_active && provenance.producer_backpressure && (provenance.frame_rate_limit || paired_presentation) &&
-      std::this_thread::get_id() != ui_thread_id_ &&
+  const bool should_wait = is_active && provenance.producer_backpressure &&
+      (provenance.frame_rate_limit || paired_presentation) && !on_ui_thread &&
       paint_result != PaintResult::kGpuLostResponsible &&
-      paint_result != PaintResult::kGpuLostExternally) {
-    const uint64_t begin = FramePacerNowNs();
-    const bool accepted = frame_publication_gate_.Wait(publication_serial);
-    if (rex::diagnostics::IsEnabled(rex::diagnostics::Category::kPresenter)) {
-      REXLOG_INFO("FramePacer point=handoff serial={} frame={} released={} wait-ns={}",
-                  publication_serial, provenance.submitted_frame, accepted, FramePacerNowNs()-begin);
-    }
-  }
+      paint_result != PaintResult::kGpuLostExternally;
+  frame_publication_pipeline_.AfterPublish(publication_serial, should_wait,
+      provenance.producer_render_ahead, paired_presentation, wait_for_publication);
   // Handle GPU loss when not in the middle of the function anymore, and
   // lifecycle management from the GPU loss callback is fine on the UI thread.
   if (host_gpu_loss_callback_) {
