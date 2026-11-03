@@ -55,10 +55,10 @@ android {
         targetSdk     = 35
         // Higher than every earlier build (upstream 0.5.9.3 and Mali alpha 1.4 are 18),
         // so it installs as an update over either.
-        versionCode   = 33
+        versionCode   = 34
         // Shown as e.g. 0.5.9.3-mali-alpha-1.5. The workflow reads both the
         // base version and versionSuffix to name the APK.
-        val versionSuffix = "-alpha-2.5-g925-render-cpu-hotpath"
+        val versionSuffix = "-alpha-2.6-g925-stable-16ms"
         versionName   = "0.5.9.3" + (if (libertyGpu == "mali") "-mali" else "") + versionSuffix
 
         // Read by DriverBridge.defaultMode(): the driver used when driver.txt
