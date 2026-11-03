@@ -290,7 +290,7 @@ void PowerLoop() {
       const float battery_c = G925BatteryCelsius();
       __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp",
                           "power: headroom=%.2f gpu=%.1fC gpu-util=%d%% battery=%.1fC "
-                          "hint=%s work=%.1fms/target %.1fms threads=%s%s",
+                          "legacy-hint=%s work=%.1fms/target %.1fms threads=%s%s",
                           headroom, gpu_temperature, gpu_busy, battery_c,
                           session ? "on" : "off",
                           reported ? reported_sum_ms / reported : 0.0, double(target_ns) / 1e6,

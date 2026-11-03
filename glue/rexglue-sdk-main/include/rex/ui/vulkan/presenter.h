@@ -31,6 +31,9 @@
 #include <rex/ui/vulkan/instance.h>
 #include <rex/ui/vulkan/submission_tracker.h>
 #include <rex/ui/vulkan/ui_samplers.h>
+#if defined(__ANDROID__)
+#include <rex/ui/vulkan/g925_paint_window.h>
+#endif
 
 namespace rex {
 namespace ui {
@@ -609,6 +612,12 @@ class VulkanPresenter final : public Presenter {
                           uint64_t present_ticks, uint64_t total_ticks,
                           uint64_t begin_tick, uint64_t end_tick, uint64_t submission,
                           uint64_t mailbox_version, uint32_t guest_frame, int32_t result) {
+#if defined(__ANDROID__)
+    // All these host CPU timings already exist. Log a 5-second summary
+    // outside the paint timing mutex; no Vulkan waits or GPU queries.
+    g925_paint_window_.Observe(acquire_ticks, submit_ticks, present_ticks,
+                               total_ticks, end_tick, guest_frame, result);
+#endif
     std::lock_guard lock(paint_timing_mutex_);
     paint_timing_latest_.overwritten = paint_timing_latest_.sequence ? paint_timing_latest_.overwritten+1 : 0;
     paint_timing_latest_.begin_tick=begin_tick;paint_timing_latest_.end_tick=end_tick;
@@ -634,6 +643,9 @@ class VulkanPresenter final : public Presenter {
   std::mutex paint_timing_mutex_;
   PaintTimingSnapshot paint_timing_latest_{};
   uint64_t paint_timing_publish_sequence_ = 0;
+#if defined(__ANDROID__)
+  G925PaintWindow g925_paint_window_{};
+#endif
 
   // Static objects for guest output presentation, used only when painting the
   // main target (can be destroyed only after awaiting main target usage

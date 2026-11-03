@@ -231,10 +231,23 @@ void StartPerformanceHint() {
     int64_t session_target = 0;
     bool sampled_baseline = false;
     auto last_thread_scan = std::chrono::steady_clock::now();
+    auto last_config_report = last_thread_scan - std::chrono::seconds(10);
     for (;;) {
       const uint32_t interval = std::clamp<uint32_t>(
           REXCVAR_GET(android_performance_hint_report_interval_ms), 16, 100);
       std::this_thread::sleep_for(std::chrono::milliseconds(interval));
+      const auto tick = std::chrono::steady_clock::now();
+      if (tick - last_config_report >= std::chrono::seconds(10)) {
+        last_config_report = tick;
+        __android_log_print(
+            ANDROID_LOG_WARN, "LibertyRecomp",
+            "performance-hint: config enabled=%d stable=%d target-ms=%lld "
+            "report-ms=%u session=%d members=%zu",
+            int(REXCVAR_GET(android_performance_hint)),
+            int(REXCVAR_GET(android_performance_hint_stable_threads)),
+            static_cast<long long>(TargetFrameNs() / 1000000), interval,
+            int(session != nullptr), threads.size());
+      }
       if (!REXCVAR_GET(android_performance_hint)) {
         if (session) {
           api.close(session);
