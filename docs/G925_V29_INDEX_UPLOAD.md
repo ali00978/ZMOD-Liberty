@@ -39,12 +39,40 @@ fallback to original indices when asynchronous reordering is unavailable remain.
 - Address/undefined-behavior sanitizers passed (host leak scanning disabled).
 - Existing 2.7/2.8 C++ state/lifetime replay, Java report behavioral tests and all
   nine APK regression scripts passed.
-- Full ARMv9 native compilation and APK verification are required before delivery.
+- Full Mali/ARMv9 native compilation and APK inspection passed.
   Phone-side speed and rendering have not been measured for this version.
 
 Rollback: 2.8 source/delivery commit `abe970f16820e55ec8a125eeb6290f035e13c2ae`,
 [verified 2.8 APK](https://github.com/ali00978/ZMOD-Liberty/actions/runs/41666819194).
 The 2.6 baseline branch remains unchanged.
+
+## Verified delivery
+
+[Successful 2.9 build and APK download](https://github.com/ali00978/ZMOD-Liberty/actions/runs/41711808812)
+from commit `03c1d6a7d5b28e28c83e1b3a234f905716dc37a2`. The app/native changes
+are in `2c3674341d54b62dba20a338906538032bbee255`; the later commit adds the
+repeatable inspection tool and its instructions.
+
+- Artifact: `13268319902`,
+  `LibertyRecompAndroid-0.5.9.3-mali-alpha-2.9-g925-index-upload-armv9.apk`.
+- APK size: 49,486,753 bytes. APK SHA-256:
+  `49db455d3b4dbc54a9f42cc7b0c45490c083d96e14ef2aabdbd6ded983868c18`.
+- Artifact ZIP SHA-256:
+  `d3240c45497bed2973f4f0f3e9259873545c72218fcae1e4ce31a125381f2a41`
+  matched the GitHub artifact API digest.
+- APK v2 signature and signed content digest verified. Same signing certificate
+  as 2.8: `c169767f68c750b93df42d09a10be52b1b99ef468ef16e3b155e4c201465328f`.
+- Package `com.libertyrecomp`, version code 37, min SDK 29, target SDK 35.
+- Default arguments and all 472 packaged resources are byte-identical to 2.8.
+  The same 11 native library names are present; `librexgpu-gta4-native.so` and
+  `librexruntime.so` have changed bytes. New native counters, restart-cache
+  code marker and Java report metric names are present.
+- CI replay tests passed; compiler cache recorded 1,002 hits and 11 misses
+  (98.91%). No on-phone performance or visual result is claimed.
+
+The initial run `41705235968` was cancelled during unusually slow dependency
+downloads. Its completed log showed continuing submodule fetches, without a
+native compilation failure. The replacement above used identical APK sources.
 
 ## Repeat APK inspection
 
