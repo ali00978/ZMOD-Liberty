@@ -46,6 +46,6 @@ assert 'kNativeTextureEvictionGraceFrames = 240;' in native
 assert 'kNativeTextureCacheRetentionFrames = 600;' in native
 assert 'kNativeBufferCacheRetentionFrames = 600;' in native
 assert 'kNativeBufferCacheLimitMiB = 256;' in native
-assert 'branches: [feature/g925-batched-render-cpu-v25]' in flow
+assert 'branches: [feature/g925-stable-16ms-v26]' in flow
 assert "github.event_name == 'push' ||" in flow
 print("PASS: native ADPF feedback A/B, title gap histogram, original Mali renderer preserved")
