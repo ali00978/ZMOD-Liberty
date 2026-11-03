@@ -32,10 +32,30 @@ case "${LIBERTY_CPU:-compatible}" in
 esac
 CPU_FLAGS="$CPU_TARGET -fno-emulated-tls"
 echo "== CPU target: ${LIBERTY_CPU:-compatible} ($CPU_FLAGS)"
+
+# GitHub Actions installs sccache, but Ninja does not use it unless CMake
+# explicitly registers it as the C/C++ compiler launcher. This is build-only:
+# the generated game code and graphics settings remain unchanged.
+SCCACHE_LAUNCHER=""
+SCCACHE_CMAKE_ARGS=()
+if [ -n "${SCCACHE_PATH:-}" ]; then
+  SCCACHE_LAUNCHER="$(cygpath -m "$SCCACHE_PATH")"
+  [[ "$SCCACHE_LAUNCHER" == *.exe ]] || SCCACHE_LAUNCHER+=".exe"
+  [ -f "$(cygpath -u "$SCCACHE_LAUNCHER")" ] || {
+    echo "!! sccache launcher not found at $SCCACHE_LAUNCHER"
+    exit 1
+  }
+  SCCACHE_CMAKE_ARGS=(
+    "-DCMAKE_C_COMPILER_LAUNCHER:STRING=$SCCACHE_LAUNCHER"
+    "-DCMAKE_CXX_COMPILER_LAUNCHER:STRING=$SCCACHE_LAUNCHER"
+  )
+  echo "== content-addressed C/C++ compiler caching enabled"
+fi
 # Reconfigure whenever the flags differ from the cached configuration, so a
 # new CPU target really recompiles everything instead of reusing old objects.
 if [ ! -f "$BUILD_DIR/build.ninja" ] || \
-   ! grep -qxF -- "CMAKE_CXX_FLAGS:STRING=$CPU_FLAGS" "$BUILD_DIR/CMakeCache.txt"; then
+   ! grep -qxF -- "CMAKE_CXX_FLAGS:STRING=$CPU_FLAGS" "$BUILD_DIR/CMakeCache.txt" || \
+   { [ -n "$SCCACHE_LAUNCHER" ] && ! grep -qxF -- "CMAKE_CXX_COMPILER_LAUNCHER:STRING=$SCCACHE_LAUNCHER" "$BUILD_DIR/CMakeCache.txt"; }; then
   echo "== configuring $BUILD_TYPE in $BUILD_DIR"
   cmake -S "$REPO" -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_C_FLAGS="$CPU_FLAGS" \
@@ -52,7 +72,8 @@ if [ ! -f "$BUILD_DIR/build.ninja" ] || \
     -DREXGLUE_ENABLE_TRACY=OFF \
     -DGTA4_NATIVE_SPIRV_VAL="$(cygpath -m "$ANDROID_NDK/shader-tools/windows-x86_64/spirv-val.exe")" \
     -DGTA4_NATIVE_GLSLANG_VALIDATOR="$(cygpath -m "$REPO/out/host-tools/glslang/bin/glslangValidator.exe")" \
-    -DGTA4_NATIVE_DXC_LIBRARY_PATH="$(cygpath -m "$REPO/out/host-tools/dxc/bin/x64")"
+    -DGTA4_NATIVE_DXC_LIBRARY_PATH="$(cygpath -m "$REPO/out/host-tools/dxc/bin/x64")" \
+    "${SCCACHE_CMAKE_ARGS[@]}"
 fi
 
 # Calls between unhooked recompiled functions bypass the weak sub_X aliases so
