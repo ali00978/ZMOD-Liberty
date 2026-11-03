@@ -21,5 +21,5 @@ assert "vkQueueWaitIdle" not in probe and "vkDeviceWaitIdle" not in probe
 assert "performance-hint: config enabled=%d stable=%d" in hint
 assert "legacy-hint=%s" in power
 assert 'line.contains("g925-paint:")' in java
-assert 'branches: [feature/g925-bottleneck-profile-v24]' in workflow
+assert 'branches: [feature/g925-batched-render-cpu-v25]' in workflow
 print("PASS: existing GPU-presenter host timestamps, ADPF effective config and filtered reports")

@@ -9,7 +9,9 @@ namespace rex::graphics::gta4_native {
 // floating-point bit patterns for the capture/finalize/record integrity check.
 template <typename State>
 inline uint64_t HashNativeFixedFunctionState(const State& state) {
-  std::array<uint8_t, sizeof(State)> bytes{};
+  // add() writes each serialized byte before the hash reads it.
+  // Skip zeroing the unused tail for every draw.
+  std::array<uint8_t, sizeof(State)> bytes;
   size_t used = 0;
   const auto add = [&](const auto& value) {
     std::memcpy(bytes.data() + used, &value, sizeof(value));

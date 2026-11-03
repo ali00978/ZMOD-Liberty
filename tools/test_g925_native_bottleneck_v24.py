@@ -24,5 +24,5 @@ assert 'cpu_command_recording_ms' in report
 assert 'gpu_frame_ms' in report
 assert 'Values are not' not in report
 assert '"frame-interval"' in native
-assert 'branches: [feature/g925-bottleneck-profile-v24]' in flow
+assert 'branches: [feature/g925-batched-render-cpu-v25]' in flow
 print("PASS: delayed native profiling; actual frame timings; source CSV filtered to no-private-data summary")

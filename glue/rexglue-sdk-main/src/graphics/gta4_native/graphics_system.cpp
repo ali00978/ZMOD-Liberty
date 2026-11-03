@@ -862,7 +862,7 @@ const char* ArtificialLightProbeName(uint64_t instance) {
 }
 
 uint64_t ConfiguredLightColorDeltaInstance() {
-  const std::string selection = REXCVAR_GET(gta4_native_light_color_delta_probe);
+  const std::string& selection = REXCVAR_GET(gta4_native_light_color_delta_probe);
   if (selection == "bulb-x892") {
     return kApartmentBulbX892Instance;
   }
@@ -4891,7 +4891,7 @@ bool Gta4NativeGraphicsSystem::ValidateAndCopyCommand(const void* command, size_
       const auto half_scene = texture_resources_.find(producer_postfx_half_scene_);
       if (half_scene != texture_resources_.end()) native_command.postfx_half_scene = half_scene->second;
     }
-    const std::string state_transport = REXCVAR_GET(gta4_native_state_transport);
+    const std::string& state_transport = REXCVAR_GET(gta4_native_state_transport);
     const bool compare_transport = state_transport == "compare";
     const bool diagnostic_snapshot =
         CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeTrace) ||
@@ -31487,6 +31487,12 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
     if (const auto* state = ahead.pipeline_state.get()) __builtin_prefetch(state);
     if (const auto* state = ahead.shader_state.get()) __builtin_prefetch(state);
   };
+  // Restart-required diagnostic settings are identical for every command
+  // in this native frame, so do not repeatedly copy strings in the hot loop.
+  const std::string& ps9_stencil_probe = REXCVAR_GET(gta4_native_light_ps9_stencil_probe);
+  const std::string& stencil_face_probe = REXCVAR_GET(gta4_native_light_stencil_face_probe);
+  const bool legacy_ps9_bypass = REXCVAR_GET(gta4_native_light_ps9_stencil_bypass);
+  const bool artificial_light_trace_requested = ShouldCaptureArtificialLightFrame(submitted_frame);
   for (size_t command_index = 0; command_index < current_frame_.size(); ++command_index) {
     breadcrumb_command = command_index;
     if (prefetch_commands) {
@@ -31606,7 +31612,6 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
     const NativeCommand* command_pointer = &queued_command;
     constexpr uint64_t kDeferredLightingPs9Hash = 0x23C88DA6F953E36Bull;
     constexpr uint32_t kFillerVolumePointTechnique = 11;
-    const std::string ps9_stencil_probe = REXCVAR_GET(gta4_native_light_ps9_stencil_probe);
     const bool ps9_accumulation_draw =
         queued_command.light_trace_technique == kFillerVolumePointTechnique &&
         queued_command.light_trace_mode == 0 && queued_command.pipeline_state &&
@@ -31614,8 +31619,9 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
         queued_command.pipeline_state->pixel_shader_resource &&
         queued_command.pipeline_state->pixel_shader_resource->hash == kDeferredLightingPs9Hash;
     uint64_t ps9_probe_instance = 0;
-    if (ps9_accumulation_draw && queued_command.shader_state &&
-        queued_command.shader_state->vertex_constants) {
+    // Do not materialize a full constant bank for a disabled diagnostic.
+    if (ps9_accumulation_draw && (legacy_ps9_bypass || ps9_stencil_probe != "original") &&
+        queued_command.shader_state && queued_command.shader_state->vertex_constants) {
       const std::shared_ptr<const std::vector<uint8_t>> vertex_constants =
           profile::CpuCall(profile::CpuOp::kConstantMaterialize, [&] { return AuthoritativeConstantState::Materialize(queued_command.shader_state->vertex_constants); });
       const std::optional<uint32_t> constant_base = DeferredLocalLightConstantBase(
@@ -31624,7 +31630,6 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
         ps9_probe_instance = StableDeferredLocalLightInstanceId(*vertex_constants, *constant_base);
       }
     }
-    const bool legacy_ps9_bypass = REXCVAR_GET(gta4_native_light_ps9_stencil_bypass);
     const bool targeted_ps9_probe =
         ps9_probe_instance == kApartmentBulbX890Instance && ps9_stencil_probe != "original";
     if (ps9_accumulation_draw && (legacy_ps9_bypass || targeted_ps9_probe)) {
@@ -31656,7 +31661,6 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
       }
     }
 
-    const std::string stencil_face_probe = REXCVAR_GET(gta4_native_light_stencil_face_probe);
     constexpr uint64_t kDeferredLightingVs1Hash = 0xA97B1F043F720396ull;
     uint64_t stencil_face_probe_instance = 0;
     if (stencil_face_probe != "original" && queued_command.pipeline_state &&
@@ -33858,8 +33862,6 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
       for (const auto& [value, mask] : skipped_pixel_shaders) skip |= (pixel_hash & mask) == value;
       if (skip) continue;
     }
-    const bool artificial_light_trace_requested =
-        ShouldCaptureArtificialLightFrame(submitted_frame);
     const NativeShader* diagnostic_vertex_shader =
         diagnostic_frame || black_output_monitor_frame || artificial_light_trace_requested || emission_probe_frame
             ? command.pipeline_state->vertex_shader_resource
@@ -35270,8 +35272,8 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
           !PhoneTraceConfig().readbacks && !selected_light_stencil_setup_draw && !light_color_delta_draw &&
           !postfx_scheduler.scene_capture_pending() &&
           !REXCVAR_GET(gta4_native_light_ps9_stencil_bypass) &&
-          REXCVAR_GET(gta4_native_light_ps9_stencil_probe) == "original" &&
-          REXCVAR_GET(gta4_native_light_stencil_face_probe) == "original" &&
+          ps9_stencil_probe == "original" &&
+          stencil_face_probe == "original" &&
           !CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeProbes)) {
         producer_depth_resolve = PrepareProducerDepthResolve(
             command_buffer, command_index, target, depth_attachment, stencil_attachment,
