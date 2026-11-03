@@ -1483,7 +1483,7 @@ public class LauncherActivity extends Activity {
         if (logs == null || logs.length == 0) return null;
         Arrays.sort(logs, (a, b) -> a.getName().compareTo(b.getName()));
         File latest = logs[logs.length - 1];
-        // Last 240 relevant events cover frame, ADPF, GPU, battery and heat.
+        // Keep up to 240 recent title, ADPF, Vulkan presenter and thermal events.
         // Reading stays on a worker thread and never blocks the UI or game.
         java.util.ArrayDeque<String> recent = new java.util.ArrayDeque<>();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
@@ -1496,6 +1496,7 @@ public class LauncherActivity extends Activity {
                 if (!line.contains("title-fps:")
                         && !line.contains("performance-hint:")
                         && !line.contains("power:")
+                        && !line.contains("g925-paint:")
                         && !line.contains("thermal-guard:")) continue;
                 recent.addLast(line.length() > 320 ? line.substring(0, 320) : line);
                 if (recent.size() > 240) recent.removeFirst();
@@ -1505,7 +1506,9 @@ public class LauncherActivity extends Activity {
         StringBuilder result = new StringBuilder(
                 "ZMOD Liberty G925 stutter analysis\n"
                 + "Source: latest PLAY WITH DEBUG LOG session. "
-                + "Title FPS/intervals are game submissions, not GPU presented frames.\n"
+                + "Title FPS = game submissions. g925-paint = Vulkan CPU-side "
+                + "queue presentation, NOT displayed frames or GPU time.\n"
+                + "The 'legacy-hint' in power reports is not the game's ADPF session.\n"
                 + "Please compare the same scene and phone temperature.\n\n");
         for (String line : recent) {
             result.append(line).append('\n');
