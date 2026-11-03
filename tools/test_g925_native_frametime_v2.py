@@ -47,5 +47,6 @@ assert 'kNativeTextureCacheRetentionFrames = 600;' in native
 assert 'kNativeBufferCacheRetentionFrames = 600;' in native
 assert 'kNativeBufferCacheLimitMiB = 256;' in native
 assert 'branches: [feature/g925-stable-16ms-v26]' in flow
-assert "github.event_name == 'push' ||" in flow
+assert "needs.plan.outputs.build_mode == 'full'" in flow
+assert 'python3 tools/validate_g925_fast_apk.py --select-mode' in flow
 print("PASS: native ADPF feedback A/B, title gap histogram, original Mali renderer preserved")
