@@ -364,7 +364,7 @@ const char* CounterName(Counter counter) {
       "pipeline-snapshot-reuses",
       "shader-snapshot-reuses",
       "zero-dof-skips",
-      "postfx-direct-writes", "constant-version-hits", "constant-content-hits", "constant-binding-uploads", "texture-binding-reuses", "constant-binding-owners",
+      "postfx-direct-writes", "constant-version-hits", "constant-content-hits", "constant-binding-uploads", "texture-binding-reuses", "constant-binding-owners", "surface-lookup-reuses", "vertex-layout-reuses",
   };
   const size_t index = EnumIndex(counter);
   return index < kNames.size() ? kNames[index] : "unknown";

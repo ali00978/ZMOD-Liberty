@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
+import java.util.HashSet;
 
 /** Read-only, bounded native profiling summary; never reads game files. */
 final class G925NativeProfileReport {
@@ -25,6 +27,8 @@ final class G925NativeProfileReport {
         {"cpu_frame_interval_ms", "Title frame interval"},
         {"cpu_fence_wait_ms", "GPU fence wait (CPU)"},
         {"cpu_command_recording_ms", "Native command recording"},
+        {"counter_surface_lookup_reuses", "Surface lookup reuses / frame"},
+        {"counter_vertex_layout_reuses", "Vertex layout reuses / frame"},
         {"cpu_command_finalize_ms", "Native command finalize"},
         {"cpu_texture_preparation_ms", "Native texture preparation"},
         {"cpu_render_callback_ms", "Native render callback"},
@@ -187,10 +191,12 @@ final class G925NativeProfileReport {
         List<Double>[] metrics = new List[METRICS.length];
         for (int i = 0; i < metrics.length; ++i) metrics[i] = new ArrayList<>();
         ArrayList<String> slowFrames = new ArrayList<>();
+        Set<String> captureFrames = new HashSet<>();
         int count = 0;
         String[] headers;
         int[] columns;
         int frameColumn;
+        int sequenceColumn;
         int intervalColumn;
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
                 new FileInputStream(csv), StandardCharsets.UTF_8))) {
@@ -202,6 +208,7 @@ final class G925NativeProfileReport {
                 columns[i] = Arrays.asList(headers).indexOf(METRICS[i][0]);
             }
             frameColumn = Arrays.asList(headers).indexOf("frame");
+            sequenceColumn = Arrays.asList(headers).indexOf("capture_sequence");
             intervalColumn = Arrays.asList(headers).indexOf("cpu_frame_interval_ms");
             if (frameColumn < 0 || intervalColumn < 0
                     || Arrays.asList(headers).indexOf("gpu_frame_ms") < 0) return null;
@@ -209,6 +216,8 @@ final class G925NativeProfileReport {
                 String[] values = line.split(",", -1);
                 if (values.length != headers.length) continue;
                 ++count;
+                String frameKey = captureKey(values, frameColumn, sequenceColumn);
+                if (frameKey != null) captureFrames.add(frameKey);
                 for (int i = 0; i < METRICS.length; ++i) {
                     double value = number(values, columns[i]);
                     if (Double.isFinite(value)) metrics[i].add(value);
@@ -251,6 +260,15 @@ final class G925NativeProfileReport {
             result.append(String.format(Locale.US, "%s: avg=%.2f p95=%.2f max=%.2f "
                     + "(n=%d)\n", METRICS[i][1], mean, p95, max, values.size()));
         }
+        String detail = null;
+        if (captureFrames.size() == count) {
+            try {
+                detail = summarizeCpuOperations(csv, captureStartedAt, captureFrames);
+            } catch (IOException ignored) {
+                // The valid top-level capture remains usable without optional detail.
+            }
+        }
+        result.append(detail != null ? detail : "\nCPU operation detail: unavailable\n");
         slowFrames.sort(Collections.reverseOrder());
         result.append("\nSlowest sampled game intervals:\n");
         for (int i = 0; i < Math.min(8, slowFrames.size()); ++i) {
@@ -259,6 +277,76 @@ final class G925NativeProfileReport {
         result.append("\nInterpretation: a slow GPU frame with low CPU recording ")
                 .append("points toward native GPU work; high CPU recording or fence ")
                 .append("wait points to a different stage. Both may coexist.\n");
+        return result.toString();
+    }
+
+    private static String captureKey(String[] values, int frame, int sequence) {
+        if (frame < 0 || sequence < 0 || frame >= values.length || sequence >= values.length)
+            return null;
+        if (!values[frame].matches("[0-9]{1,20}") || !values[sequence].matches("[0-9]{1,20}"))
+            return null;
+        return values[frame] + "/" + values[sequence];
+    }
+
+    private static String summarizeCpuOperations(File capture, long started, Set<String> frames)
+            throws IOException {
+        File csv = new File(capture.getParentFile(), "native-performance-cpu.csv");
+        if (!csv.isFile() || csv.lastModified() < started
+                || csv.length() > 16 * 1024 * 1024)
+            return null;
+        Map<String, double[]> groups = new LinkedHashMap<>();
+        Set<String> seenRows = new HashSet<>();
+        Set<String> seenFrames = new HashSet<>();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                new FileInputStream(csv), StandardCharsets.UTF_8))) {
+            String line = reader.readLine();
+            if (line == null || line.length() > 2048) return null;
+            List<String> headers = Arrays.asList(line.split(",", -1));
+            int frame = headers.indexOf("frame"), sequence = headers.indexOf("sequence");
+            int phase = headers.indexOf("phase"), operation = headers.indexOf("operation");
+            int calls = headers.indexOf("calls"), self = headers.indexOf("self_ms");
+            int inclusive = headers.indexOf("inclusive_ms"), peak = headers.indexOf("max_call_ms");
+            if (frame < 0 || sequence < 0 || phase < 0 || operation < 0 || calls < 0
+                    || self < 0 || inclusive < 0 || peak < 0) return null;
+            int rows = 0;
+            while ((line = reader.readLine()) != null) {
+                if (++rows > 120000 || line.length() > 2048) return null;
+                String[] values = line.split(",", -1);
+                if (values.length != headers.size()) return null;
+                String frameKey = captureKey(values, frame, sequence);
+                if (frameKey == null || !frames.contains(frameKey)) continue;
+                if (!values[phase].matches("[a-z0-9-]{1,64}")
+                        || !values[operation].matches("[a-z0-9-]{1,64}")) return null;
+                double selfMs = number(values, self), inclusiveMs = number(values, inclusive);
+                double count = number(values, calls), peakMs = number(values, peak);
+                if (!Double.isFinite(selfMs) || !Double.isFinite(inclusiveMs)
+                        || !Double.isFinite(count) || !Double.isFinite(peakMs)
+                        || selfMs < 0 || inclusiveMs < selfMs - 0.000001 || count <= 0
+                        || count != Math.rint(count) || peakMs < 0) return null;
+                String group = values[phase] + " / " + values[operation];
+                if (!seenRows.add(frameKey + "/" + group)) return null;
+                seenFrames.add(frameKey);
+                double[] total = groups.computeIfAbsent(group, ignored -> new double[3]);
+                if (groups.size() > 512) return null;
+                total[0] += selfMs;
+                total[1] += count;
+                total[2] = Math.max(total[2], peakMs);
+                if (!Double.isFinite(total[0]) || !Double.isFinite(total[1])) return null;
+            }
+        }
+        // Missing detail frames must not be presented as zero-cost work.
+        if (!seenFrames.equals(frames) || groups.isEmpty()) return null;
+        List<Map.Entry<String, double[]>> sorted = new ArrayList<>(groups.entrySet());
+        sorted.sort((a, b) -> Double.compare(b.getValue()[0], a.getValue()[0]));
+        StringBuilder result = new StringBuilder("\nTop CPU operations (self time excludes child scopes; "
+                + "averages per captured frame, n=" + frames.size() + "):\n");
+        for (int i = 0; i < Math.min(8, sorted.size()); ++i) {
+            Map.Entry<String, double[]> entry = sorted.get(i);
+            double[] total = entry.getValue();
+            result.append(String.format(Locale.US,
+                    "%s: self=%.3f ms calls/frame=%.1f peak-call=%.3f ms\n",
+                    entry.getKey(), total[0] / frames.size(), total[1] / frames.size(), total[2]));
+        }
         return result.toString();
     }
 

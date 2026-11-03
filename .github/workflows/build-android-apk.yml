@@ -151,6 +151,7 @@ jobs:
           G925_TEST_CXX: clang++
         run: |
           python tools/test_g925_render_state_v27.py
+          python tools/test_g925_draw_lookup_v28.py
           python tools/test_g925_profile_report_v27.py
 
       - name: Install Android SDK platform and NDK r29

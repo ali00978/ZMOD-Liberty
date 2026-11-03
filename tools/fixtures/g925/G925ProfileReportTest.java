@@ -102,6 +102,54 @@ public final class G925ProfileReportTest {
         check(report.contains("GPU fence wait (CPU): unavailable"));
         check(G925NativeProfileReport.summarize(root, csv.toFile().lastModified() + 10000, applied) == null);
         check(G925NativeProfileReport.summarize(root, Long.MAX_VALUE, applied) == null);
+        // Detail must belong to exactly the same frame/sequence identities.
+        Files.writeString(csv, "frame,capture_sequence,gpu_frame_ms,cpu_frame_interval_ms\n"
+                + "1,7,20,40\n2,8,,50\n3,9,30,60\n");
+        Path cpu = diagnostics.resolve("native-performance-cpu.csv");
+        String header = "frame,sequence,phase,operation,calls,inclusive_ms,self_ms,max_call_ms\n";
+        String details = "1,7,record,record-command,10,30,6,5\n"
+                + "1,7,record,surface-image-lookup,20,8,8,1\n"
+                + "2,8,record,record-command,20,40,9,6\n"
+                + "3,9,record,record-command,30,50,12,7\n"
+                + "999,999,record,unrelated-capture,1,999,999,999\n";
+        long detailTime = System.currentTimeMillis();
+        Files.writeString(cpu, header + details);
+        Files.setLastModifiedTime(cpu, java.nio.file.attribute.FileTime.fromMillis(detailTime));
+        Files.setLastModifiedTime(csv, java.nio.file.attribute.FileTime.fromMillis(detailTime - 1));
+        String detailed = G925NativeProfileReport.summarize(root, started, applied);
+        check(detailed.contains("record / record-command: self=9.000 ms calls/frame=20.0 peak-call=7.000 ms"));
+        check(detailed.contains("record / surface-image-lookup: self=2.667 ms calls/frame=6.7 peak-call=1.000 ms"));
+        check(!detailed.contains("unrelated-capture"));
+        check(detailed.contains("n=3):"));
+        for (String bad : List.of(
+                details.replace("3,9", "3,10"),
+                details + "1,7,record,record-command,10,30,6,5\n",
+                details.replace(",30,6,", ",30,NaN,"),
+                details.replace(",30,6,", ",30,,"),
+                details.replace(",30,6,", ",30,-1,"),
+                details.replace(",30,6,", ",30,31,"),
+                details.replace("record-command", "PRIVATE/SENTINEL"))) {
+            Files.writeString(cpu, header + bad);
+            Files.setLastModifiedTime(cpu, java.nio.file.attribute.FileTime.fromMillis(detailTime));
+            String invalid = G925NativeProfileReport.summarize(root, started, applied);
+            check(invalid.contains("CPU operation detail: unavailable"));
+            check(invalid.contains("GPU frame: avg=25.00"));
+            check(!invalid.contains("PRIVATE/SENTINEL"));
+        }
+        Files.writeString(cpu, header + details);
+        Files.setLastModifiedTime(cpu, java.nio.file.attribute.FileTime.fromMillis(started - 1));
+        check(G925NativeProfileReport.summarize(root, started, applied)
+                .contains("CPU operation detail: unavailable"));
+        // The primary CSV is written before detail, then renamed last. Its
+        // mtime may precede valid detail even though publication is atomic.
+        Files.setLastModifiedTime(cpu, java.nio.file.attribute.FileTime.fromMillis(detailTime + 2));
+        check(G925NativeProfileReport.summarize(root, started, applied)
+                .contains("Top CPU operations"));
+        Files.writeString(cpu, header + "x".repeat(2049));
+        Files.setLastModifiedTime(cpu, java.nio.file.attribute.FileTime.fromMillis(detailTime));
+        check(G925NativeProfileReport.summarize(root, started, applied)
+                .contains("CPU operation detail: unavailable"));
+        System.out.println("PASS: matched CPU detail, exclusive averages, missing/duplicate/invalid/stale data rejected");
         System.out.println("PASS: separate-process snapshots, exact launch identity, atomic replacement, bounded reads, precedence, privacy, CSV and stale capture");
     }
 }

@@ -75,6 +75,7 @@
 #include "native_performance_samples.h"
 #include "native_profile_detail.h"
 #include "native_pipeline_lookup_memo.h"
+#include "native_draw_lookup_cache.h"
 #include "native_reflection_registry.h"
 #include "native_resolve_policy.h"
 #include "native_resolve_reuse.h"
@@ -300,6 +301,7 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
     // Only the render worker updates memoization on an immutable snapshot.
     mutable NativePipelineLookupMemo<NativeFixedFunctionState, kRenderTargetCount, VkPipeline>
         pipeline_lookup_memo;
+    mutable NativeVertexStreamMemo vertex_stream_memo;
     // Recorder-only memos of the shader-name classifications behind GPU range
     // attribution (string searches over both filenames); 0xFFFF: not computed.
     mutable uint16_t translucent_range_memo = 0xFFFF;
@@ -1885,7 +1887,7 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
                                      bool primitive_restart_enable = false, bool prewarm = false);
   void TryPrewarmDrawPipeline(const NativeCommand& command);
   bool GetRequiredVertexStreams(const NativePipelineState& state,
-                                std::array<bool, kVertexStreamCount>& required_streams) const;
+                                uint32_t& required_streams);
   bool UploadBufferResource(const std::shared_ptr<const NativeBufferResource>& resource,
                             VkCommandBuffer command_buffer, bool index_buffer, bool index32,
                             const NativePipelineState* vertex_state, uint32_t vertex_stream,
@@ -2223,6 +2225,7 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
   std::unordered_set<uint32_t> dirty_texture_handles_;
   std::unordered_map<uint32_t, uint32_t> vector_font_ids_;
   NativeVirtualResourceRegistry virtual_resource_registry_;
+  std::atomic<uint64_t> virtual_surface_registry_revision_{1};
   uint64_t next_texture_generation_ = 1;
   std::mutex command_capture_mutex_;
   // State commands absorbed since the last queued command (command_capture_mutex_).
@@ -2820,6 +2823,7 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
   uint64_t texture_image_evicted_bytes_ = 0;
   uint64_t texture_allocation_retry_count_ = 0;
   uint64_t texture_allocation_failure_count_ = 0;
+  NativeSurfaceLookupCache<NativeSurfaceImage> surface_lookup_cache_;
   std::vector<std::unique_ptr<NativeSurfaceImage>> native_surface_images_;
   std::unordered_map<uint32_t, std::vector<NativeSurfaceImage*>> surface_images_by_handle_;
   struct NativeTextureReadback {
