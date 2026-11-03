@@ -79,13 +79,13 @@ final class G925NativeProfileReport {
             }
         }
         StringBuilder snapshot = new StringBuilder();
-        snapshot.append("Launch-time config (explicit launcher/args overrides only):\\n");
+        snapshot.append("Launch-time config (explicit launcher/args overrides only):\n");
         for (String[] setting : CAPTURE_SETTINGS) {
             snapshot.append(setting[1]).append(": ")
                     .append(values.getOrDefault(setting[0], "default / in-game"))
-                    .append('\\n');
+                    .append('\n');
         }
-        snapshot.append("16 ms CPU feedback is NOT an FPS cap; in-game options may differ.\\n");
+        snapshot.append("16 ms CPU feedback is NOT an FPS cap; in-game options may differ.\n");
         return snapshot.toString();
     }
 
@@ -140,12 +140,12 @@ final class G925NativeProfileReport {
                 .append("GPU frame time is a Vulkan timestamp if supported. ")
                 .append("Blank measurements are NOT zero.\n")
                 .append("CPU ranges may overlap: do not sum them.\n")
-                .append("Build: ").append(BuildConfig.VERSION_NAME).append('\\n')
-                .append("Samples: ").append(count).append("\\n");
+                .append("Build: ").append(BuildConfig.VERSION_NAME).append('\n')
+                .append("Samples: ").append(count).append("\n");
         if (launchSettings != null && !launchSettings.isEmpty()) {
             result.append(launchSettings);
         }
-        result.append('\\n');
+        result.append('\n');
         for (int i = 0; i < METRICS.length; ++i) {
             List<Double> values = metrics[i];
             if (values.isEmpty()) {
