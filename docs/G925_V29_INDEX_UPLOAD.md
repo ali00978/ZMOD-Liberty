@@ -45,3 +45,23 @@ fallback to original indices when asynchronous reordering is unavailable remain.
 Rollback: 2.8 source/delivery commit `abe970f16820e55ec8a125eeb6290f035e13c2ae`,
 [verified 2.8 APK](https://github.com/ali00978/ZMOD-Liberty/actions/runs/41666819194).
 The 2.6 baseline branch remains unchanged.
+
+## Repeat APK inspection
+
+`tools/inspect_g925_apk.py` verifies the RSA APK v2 signature and signed ZIP
+content digest, checks the manifest version, and compares the update certificate,
+default arguments, packaged resources and native library set with the baseline.
+It requires Python's `cryptography` package. Example:
+
+```sh
+python tools/inspect_g925_apk.py v29.apk --baseline v28.apk \
+  --version-code 37 --version-name 0.5.9.3-mali-alpha-2.9-g925-index-upload \
+  --native-marker converted-index-upload-reuses \
+  --native-marker plain-index-uploads-skipped \
+  --dex-marker counter_converted_index_upload_reuses \
+  --dex-marker counter_plain_index_uploads_skipped \
+  --json-file v29-inspection.json
+```
+
+The known-good 2.8 artifact passed this inspection. A copy with one ZIP content
+byte changed was rejected for a signed content digest mismatch.
