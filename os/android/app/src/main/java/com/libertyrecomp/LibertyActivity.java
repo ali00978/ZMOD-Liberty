@@ -70,6 +70,8 @@ public class LibertyActivity extends SDLActivity {
     private static final String LAUNCH_REPORT = "last_launch.txt";
     /** Intent extra from the launcher's "Play (Debug Log)". */
     static final String EXTRA_DEBUG_LOG = "debug_log";
+    /** One-shot late native CPU/GPU profile, isolated from normal gameplay. */
+    static final String EXTRA_G925_NATIVE_PROFILE = "g925_native_profile";
     /** Launcher "Performance test settings": no sun shadow map. */
     static final String EXTRA_SHADOWS_OFF = "perf_shadows_off";
     /** Launcher "Performance test settings": fixed 0.5 draw distance. */
@@ -325,6 +327,26 @@ public class LibertyActivity extends SDLActivity {
         if (!diagnosticsSet) {
             arguments.add("--diagnostics=true");
             arguments.add("--diagnostics_categories=logging");
+        }
+        // Explicit launcher-only hardware bottleneck capture. Start 65 s
+        // after first frame so profiling never degrades the warm-up baseline.
+        // This changes no quality, render or governor setting. Remove any
+        // preexisting profiling arguments only for this one launch.
+        boolean nativeProfile = getIntent() != null
+                && getIntent().getBooleanExtra(EXTRA_G925_NATIVE_PROFILE, false);
+        if (nativeProfile) {
+            arguments.removeIf(a -> a.startsWith("--diagnostics")
+                    || a.startsWith("--gta4_profile_native_"));
+            arguments.add("--diagnostics=true");
+            arguments.add("--diagnostics_categories=logging,native-profiler");
+            arguments.add("--gta4_profile_native_autostart=false");
+            arguments.add("--gta4_profile_native_capture_trigger=1");
+            arguments.add("--gta4_profile_native_capture_delay_seconds=65");
+            arguments.add("--gta4_profile_native_samples=180");
+            arguments.add("--gta4_profile_native_interval=1");
+            arguments.add("--gta4_profile_native_detailed_cpu=true");
+            arguments.add("--gta4_profile_native_detailed_gpu=true");
+            arguments.add("--gta4_profile_native_gpu_query_budget=64");
         }
         addInstallSources(new File(dataRoot, "install"), arguments);
         for (int i = arguments.size() - 1; i >= 0; --i) {

@@ -23,5 +23,5 @@ assert 'new GraphicsSetting("Android CPU performance hints",' in java
 assert 'line.contains("power:")' in java
 assert 'line.contains("thermal-guard:")' in java
 assert 'recent.size() > 240' in java
-assert 'branches: [feature/g925-presenter-stutter-v23]' in flow
+assert 'branches: [feature/g925-bottleneck-profile-v24]' in flow
 print("PASS: stable ADPF thread roles, no visual change, GPU/battery/thermal log, selectable hint-off")

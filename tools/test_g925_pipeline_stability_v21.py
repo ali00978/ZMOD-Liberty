@@ -33,6 +33,6 @@ assert 'new Intent(Intent.ACTION_SEND)' in java
 assert 'recent.size() > 240' in java
 assert 'play for 2 minutes' in java
 assert 'kNativeTextureEvictionGraceFrames = 240;' in old
-assert 'branches: [feature/g925-presenter-stutter-v23]' in workflow
+assert 'branches: [feature/g925-bottleneck-profile-v24]' in workflow
 assert "github.event_name == 'push'" in workflow
 print("PASS: demanded pipeline priority, capacity rejection and stock Mali renderer preserved")

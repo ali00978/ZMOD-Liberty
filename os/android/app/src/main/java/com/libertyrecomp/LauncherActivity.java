@@ -444,6 +444,19 @@ public class LauncherActivity extends Activity {
         // Android 11+ restricts access to Android/data from normal file
         // browsers. Share a small filtered performance report from the app
         // itself rather than requiring developer tools or raw logcat access.
+        Button captureNative = button("CAPTURE 30 FPS BOTTLENECK", false);
+        captureNative.setOnClickListener(v -> play(true, true));
+        panel.addView(captureNative, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
+        panel.addView(text("Captures 180 CPU/GPU frames starting 65 seconds after the first "
+                + "game frame. Use the same street and graphics; the capture itself can "
+                + "temporarily affect FPS.", 12, R.color.picker_muted),
+                matchWrap(dp(7)));
+        Button shareNative = button("SHARE NATIVE CPU + GPU REPORT", false);
+        shareNative.setOnClickListener(v -> shareG925NativeReport());
+        panel.addView(shareNative, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
+
         Button shareStutter = button("SHARE STUTTER REPORT", false);
         shareStutter.setOnClickListener(v -> shareG925StutterReport());
         panel.addView(shareStutter, new LinearLayout.LayoutParams(
@@ -1446,6 +1459,37 @@ public class LauncherActivity extends Activity {
      *
      * A report is created only when the user explicitly taps Share.
      */
+    private void shareG925NativeReport() {
+        new Thread(() -> {
+            String report = null;
+            try {
+                long started = getSharedPreferences("g925_native_profile", MODE_PRIVATE)
+                        .getLong("capture_started", Long.MAX_VALUE);
+                report = G925NativeProfileReport.summarize(mDataRoot, started);
+            } catch (IOException e) {
+                Log.w(TAG, "Unable to read completed native CPU/GPU capture", e);
+            }
+            final String shared = report;
+            mMain.post(() -> {
+                if (shared == null || shared.isEmpty()) {
+                    toast("No new capture yet. Run CAPTURE 30 FPS BOTTLENECK, "
+                            + "play at least 85 seconds, then return here.");
+                    return;
+                }
+                Intent send = new Intent(Intent.ACTION_SEND);
+                send.setType("text/plain");
+                send.putExtra(Intent.EXTRA_SUBJECT, "G925 30 FPS native GPU/CPU bottleneck");
+                send.putExtra(Intent.EXTRA_TEXT, shared);
+                try {
+                    startActivity(Intent.createChooser(send, "Share native bottleneck report"));
+                } catch (Exception e) {
+                    Log.w(TAG, "Unable to share native profiler report", e);
+                    toast("No sharing app available.");
+                }
+            });
+        }, "G925NativeReport").start();
+    }
+
     private void shareG925StutterReport() {
         new Thread(() -> {
             String report;
@@ -2270,6 +2314,10 @@ public class LauncherActivity extends Activity {
     }
 
     private void play(boolean debugLog) {
+        play(debugLog, false);
+    }
+
+    private void play(boolean debugLog, boolean nativeProfile) {
         if (mBusy) return;
         // Never start with unsaved launcher settings: save them first.
         if (mSettingsDirty) {
@@ -2294,6 +2342,14 @@ public class LauncherActivity extends Activity {
                 setBusy(false, null);
                 Intent intent = new Intent(this, LibertyActivity.class);
                 if (debugLog) intent.putExtra(LibertyActivity.EXTRA_DEBUG_LOG, true);
+                if (nativeProfile) {
+                    // Check the CSV timestamp when sharing so an earlier run
+                    // can never be mistaken for the current hardware test.
+                    getSharedPreferences("g925_native_profile", MODE_PRIVATE)
+                            .edit().putLong("capture_started", System.currentTimeMillis())
+                            .commit();
+                    intent.putExtra(LibertyActivity.EXTRA_G925_NATIVE_PROFILE, true);
+                }
                 android.content.SharedPreferences perf = perfTestPreferences();
                 intent.putExtra(LibertyActivity.EXTRA_SHADOWS_OFF, perf.getBoolean(PERF_SHADOWS_OFF, false));
                 intent.putExtra(LibertyActivity.EXTRA_HALF_DRAW_DISTANCE,
