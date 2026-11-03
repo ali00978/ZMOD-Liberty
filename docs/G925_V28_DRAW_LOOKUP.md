@@ -44,8 +44,24 @@ configured by the user; 2.8 does not add new ones.
 - Actual Java report class compiled and executed: separate-process launch
   snapshots, CSV statistics and matching CPU detail; invalid/missing/stale data
   does not invalidate a good top-level report or produce false zero timings.
-- A full ARMv9 native APK build is required; Java-only native reuse is rejected
-  for these changes. Phone-side rendering and performance remain unverified.
+- Full ARMv9 native APK compilation and packaging passed. Java-only native
+  reuse was rejected for these changes. Phone-side rendering and performance
+  remain unverified.
 
 Rollback: 2.7 delivery commit `81cdd89b7183f430283a8119dc9d66de7efa5898`,
 GitHub Actions run `41659074125`. Keep the 2.6 baseline branch unchanged.
+
+## Verified delivery
+
+- Source commit: `e318554795a9fa48c8451803b9423e083240078d`.
+- [Successful full native build and APK](https://github.com/ali00978/ZMOD-Liberty/actions/runs/41666819194).
+- Artifact `13249300498`: `LibertyRecompAndroid-0.5.9.3-mali-alpha-2.8-g925-draw-lookup-armv9.apk`.
+- GitHub artifact ZIP SHA-256: `637275f3e22987d3b27aea72125570d6dde8f8c4bc3afd4de4927930ebf00ac0`.
+- APK size: 49,484,917 bytes; SHA-256: `2744227011495c898d50bd1a6f4ad5aa6d1020fa6f220e68e11c269a5ea2b71f`.
+- APK v2 cryptographic signature and content digest verified. Package remains
+  `com.libertyrecomp`, with version code 36 and the same certificate as 2.6/2.7.
+- New native renderer binary and CPU-detail report markers are present. All
+  11 ARM64 native library names, 472 packaged resources and default arguments
+  were checked against the prior verified APK; quality assets/defaults match.
+- Compiler cache: 1,002 hits, 11 misses (98.91% hit rate). This is a build statistic,
+  not a phone performance measurement.
