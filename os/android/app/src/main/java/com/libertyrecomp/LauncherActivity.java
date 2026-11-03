@@ -2359,12 +2359,15 @@ public class LauncherActivity extends Activity {
                 if (nativeProfile) {
                     // Check the CSV timestamp when sharing so an earlier run
                     // can never be mistaken for the current hardware test.
+                    long captureStartedAt = System.currentTimeMillis();
                     getSharedPreferences("g925_native_profile", MODE_PRIVATE)
-                            .edit().putLong("capture_started", System.currentTimeMillis())
+                            .edit().putLong("capture_started", captureStartedAt)
                             .putString("capture_settings",
                                     G925NativeProfileReport.captureSettings(mDataRoot))
                             .commit();
                     intent.putExtra(LibertyActivity.EXTRA_G925_NATIVE_PROFILE, true);
+                    intent.putExtra(LibertyActivity.EXTRA_G925_NATIVE_PROFILE_STARTED,
+                            captureStartedAt);
                 }
                 android.content.SharedPreferences perf = perfTestPreferences();
                 intent.putExtra(LibertyActivity.EXTRA_SHADOWS_OFF, perf.getBoolean(PERF_SHADOWS_OFF, false));

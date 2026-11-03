@@ -5,8 +5,9 @@ name: Android APK
 # Download the result from the run's "Artifacts" section.
 #
 # Full builds still compile the whole engine when native sources change.
-# Manual java-only mode reuses verified native libraries from a previous successful
-# APK of THIS repository, but refuses to run if native sources differ.
+# Java-only mode reuses verified native libraries from a previous successful APK
+# of THIS repository. PR updates select it automatically only after the source
+# compatibility guard passes; manual builds can still request full compilation.
 
 on:
   push:
@@ -59,8 +60,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plan:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    name: Select verified full or Java-only build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      build_mode: ${{ steps.mode.outputs.build_mode }}
+      base_run_id: ${{ steps.mode.outputs.base_run_id }}
+    steps:
+      - name: Checkout build guard at the exact target commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /tools/validate_g925_fast_apk.py
+
+      - name: Select build mode from verified successful artifacts
+        id: mode
+        env:
+          GH_TOKEN: ${{ github.token }}
+          G925_TARGET_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          G925_HEAD_BRANCH: ${{ github.head_ref || github.ref_name }}
+          G925_REQUESTED_MODE: ${{ inputs.build_mode || 'full' }}
+          G925_BASE_RUN_ID: ${{ inputs.base_run_id }}
+          LIBERTY_GPU: ${{ inputs.gpu || 'mali' }}
+          LIBERTY_CPU: ${{ inputs.cpu || 'armv9' }}
+        run: python3 tools/validate_g925_fast_apk.py --select-mode
+
   apk:
-    if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.build_mode != 'java-only') }}
+    needs: plan
+    if: ${{ needs.plan.outputs.build_mode == 'full' }}
     name: APK (${{ inputs.gpu || 'mali' }}, ${{ inputs.cpu || 'armv9' }})
     runs-on: windows-2022
     timeout-minutes: 360
@@ -228,7 +259,8 @@ jobs:
           retention-days: 30
 
   fast-apk:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'java-only' }}
+    needs: plan
+    if: ${{ needs.plan.outputs.build_mode == 'java-only' }}
     name: Fast APK (reuse verified Mali ARMv9 native libraries)
     runs-on: windows-2022
     timeout-minutes: 90
@@ -238,7 +270,8 @@ jobs:
     env:
       LIBERTY_GPU: ${{ inputs.gpu || 'mali' }}
       LIBERTY_CPU: ${{ inputs.cpu || 'armv9' }}
-      G925_BASE_RUN_ID: ${{ inputs.base_run_id || '41363883009' }}
+      G925_BASE_RUN_ID: ${{ needs.plan.outputs.base_run_id }}
+      G925_TARGET_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       NDK_VER: 29.0.14206865
       STRIP: '1'
 
@@ -246,6 +279,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Allow long paths
@@ -276,7 +310,7 @@ jobs:
       - name: Download verified previous native APK
         uses: actions/download-artifact@v4
         with:
-          run-id: ${{ inputs.base_run_id || '41363883009' }}
+          run-id: ${{ needs.plan.outputs.base_run_id }}
           pattern: LibertyRecompAndroid-*
           merge-multiple: true
           path: out/fast-apk
@@ -293,6 +327,9 @@ jobs:
           SDKMANAGER="$(cygpath -u "$ANDROID_HOME")/cmdline-tools/latest/bin/sdkmanager.bat"
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Test final capture settings across separate Java processes
+        run: python tools/test_g925_profile_report_v27.py
 
       - name: Prepare pinned SDL Java dependency sources
         run: |

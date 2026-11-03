@@ -6,6 +6,8 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -36,9 +38,8 @@ final class G925NativeProfileReport {
         {"counter_texture_upload_bytes", "Texture bytes / frame"}
     };
 
-    // Snapshot explicit performance settings when Capture is tapped, not later
-    // when the report is shared. Read only whitelisted keys from local launcher
-    // configuration; never include paths, user content or device identifiers.
+    // Snapshot explicit performance settings at launch, not when sharing.
+    // Read only whitelisted keys; never include paths or device identifiers.
     private static final String[][] CAPTURE_SETTINGS = {
         {"android_performance_hint", "Android performance hints"},
         {"android_performance_hint_target_ms", "CPU hint target (ms)"},
@@ -127,12 +128,62 @@ final class G925NativeProfileReport {
         return snapshot.toString();
     }
 
+    // The game and launcher use different Android processes. SharedPreferences
+    // caches are process-local, so publish the final snapshot through an atomic
+    // file replacement and read it fresh only for this capture.
+    private static final String APPLIED_SETTINGS_FILE = "g925-native-launch-settings.txt";
+    private static final int MAX_SETTINGS_BYTES = 16384;
+
+    static void saveAppliedSettings(File root, long captureStartedAt, List<String> arguments)
+            throws IOException {
+        if (root == null || captureStartedAt <= 0 || captureStartedAt == Long.MAX_VALUE) return;
+        File temporary = File.createTempFile("g925-launch-", ".tmp", root);
+        try {
+            String snapshot = "capture_started=" + captureStartedAt + '\n'
+                    + captureAppliedSettings(root, arguments);
+            Files.write(temporary.toPath(), snapshot.getBytes(StandardCharsets.UTF_8));
+            Files.move(temporary.toPath(), new File(root, APPLIED_SETTINGS_FILE).toPath(),
+                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            temporary.delete();
+        }
+    }
+
+    private static String readAppliedSettings(File root, long captureStartedAt) throws IOException {
+        // File mtimes on emulated/shared storage can be rounded. Match the exact
+        // launch token, not the snapshot's mtime, and bound the actual read too.
+        File snapshot = new File(root, APPLIED_SETTINGS_FILE);
+        if (!snapshot.isFile() || snapshot.length() > MAX_SETTINGS_BYTES) return null;
+        byte[] bytes = new byte[MAX_SETTINGS_BYTES + 1];
+        int used = 0;
+        try (FileInputStream input = new FileInputStream(snapshot)) {
+            while (used < bytes.length) {
+                int count = input.read(bytes, used, bytes.length - used);
+                if (count < 0) break;
+                used += count;
+            }
+        }
+        if (used > MAX_SETTINGS_BYTES) return null;
+        String content = new String(bytes, 0, used, StandardCharsets.UTF_8);
+        String header = "capture_started=" + captureStartedAt + '\n';
+        if (!content.startsWith(header)) return null;
+        String settings = content.substring(header.length());
+        return settings.startsWith("Launch-time config (") && settings.endsWith("\n")
+                ? settings : null;
+    }
+
     static String summarize(File dataRoot, long captureStartedAt, String launchSettings)
             throws IOException {
         if (dataRoot == null || captureStartedAt == Long.MAX_VALUE) return null;
         File csv = new File(new File(new File(dataRoot, "LibertyRecomp"),
                 "Diagnostics"), "native-performance-latest.csv");
         if (!csv.isFile() || csv.lastModified() < captureStartedAt) return null;
+        try {
+            String applied = readAppliedSettings(dataRoot, captureStartedAt);
+            if (applied != null) launchSettings = applied;
+        } catch (IOException ignored) {
+            // Retain the launcher's labeled pre-launch fallback.
+        }
         List<Double>[] metrics = new List[METRICS.length];
         for (int i = 0; i < metrics.length; ++i) metrics[i] = new ArrayList<>();
         ArrayList<String> slowFrames = new ArrayList<>();

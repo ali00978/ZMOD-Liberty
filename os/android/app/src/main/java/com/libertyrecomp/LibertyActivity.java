@@ -72,6 +72,7 @@ public class LibertyActivity extends SDLActivity {
     static final String EXTRA_DEBUG_LOG = "debug_log";
     /** One-shot late native CPU/GPU profile, isolated from normal gameplay. */
     static final String EXTRA_G925_NATIVE_PROFILE = "g925_native_profile";
+    static final String EXTRA_G925_NATIVE_PROFILE_STARTED = "g925_native_profile_started";
     /** Launcher "Performance test settings": no sun shadow map. */
     static final String EXTRA_SHADOWS_OFF = "perf_shadows_off";
     /** Launcher "Performance test settings": fixed 0.5 draw distance. */
@@ -370,9 +371,13 @@ public class LibertyActivity extends SDLActivity {
         arguments.add("--gpu_plugin=gta4-native");
         mArguments = withoutDuplicateOptions(arguments).toArray(new String[0]);
         if (nativeProfile) {
-            getSharedPreferences("g925_native_profile", MODE_PRIVATE).edit()
-                    .putString("capture_settings", G925NativeProfileReport.captureAppliedSettings(
-                            dataRoot, Arrays.asList(mArguments))).commit();
+            try {
+                G925NativeProfileReport.saveAppliedSettings(dataRoot,
+                        getIntent().getLongExtra(EXTRA_G925_NATIVE_PROFILE_STARTED, 0),
+                        Arrays.asList(mArguments));
+            } catch (IOException e) {
+                Log.w(TAG, "Could not persist final capture settings", e);
+            }
         }
         String driver = readFirstLine(new File(dataRoot, "driver.txt"));
         mDriverText = driver;
