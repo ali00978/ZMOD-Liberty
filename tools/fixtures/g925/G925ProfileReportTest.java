@@ -64,6 +64,19 @@ public final class G925ProfileReportTest {
         check(report.contains("CPU feedback interval (ms): 16"));
         check(!report.contains("STALE_PROCESS_CACHE"));
         Path snapshot = root.toPath().resolve("g925-native-launch-settings.txt");
+        String currentSnapshot = Files.readString(snapshot);
+        // Reproduce the upgrade bug: old measurements and launch preference,
+        // freshly touched CSV, but an old/missing captured build identity.
+        Files.setLastModifiedTime(csv, java.nio.file.attribute.FileTime.fromMillis(
+                System.currentTimeMillis() + 86400000L));
+        Files.writeString(snapshot, currentSnapshot.replace(
+                "capture_build=" + BuildConfig.VERSION_NAME, "capture_build=older-app"));
+        check(G925NativeProfileReport.summarize(root, started, "CURRENT_LAUNCHER_SETTINGS") == null);
+        Files.writeString(snapshot, currentSnapshot.replace(
+                "capture_build=" + BuildConfig.VERSION_NAME + "\n", ""));
+        check(G925NativeProfileReport.summarize(root, started, "CURRENT_LAUNCHER_SETTINGS") == null);
+        Files.writeString(snapshot, currentSnapshot);
+        check(report.contains("Capture started (UTC): " + java.time.Instant.ofEpochMilli(started)));
         // Coarse file timestamps must not hide a valid same-session snapshot.
         Files.setLastModifiedTime(snapshot, java.nio.file.attribute.FileTime.fromMillis(1));
         check(G925NativeProfileReport.summarize(root, started, "STALE_PROCESS_CACHE")
@@ -72,17 +85,14 @@ public final class G925ProfileReportTest {
         Files.setLastModifiedTime(snapshot, java.nio.file.attribute.FileTime.fromMillis(
                 System.currentTimeMillis() + 86400000L));
         String olderSnapshot = G925NativeProfileReport.summarize(root, started + 1, "LABELED_FALLBACK");
-        check(olderSnapshot.contains("LABELED_FALLBACK"));
-        check(!olderSnapshot.contains("final applied overrides"));
+        check(olderSnapshot == null);
         publishInGameProcess(root, started + 1, 25);
         check(G925NativeProfileReport.summarize(root, started + 1, "STALE_PROCESS_CACHE")
                 .contains("CPU feedback interval (ms): 25"));
         Files.writeString(snapshot, "capture_started=" + (started + 1) + "\n");
-        check(G925NativeProfileReport.summarize(root, started + 1, "LABELED_FALLBACK")
-                .contains("LABELED_FALLBACK"));
+        check(G925NativeProfileReport.summarize(root, started + 1, "LABELED_FALLBACK") == null);
         Files.writeString(snapshot, "x".repeat(16385));
-        check(G925NativeProfileReport.summarize(root, started + 1, "LABELED_FALLBACK")
-                .contains("LABELED_FALLBACK"));
+        check(G925NativeProfileReport.summarize(root, started + 1, "LABELED_FALLBACK") == null);
         Files.delete(snapshot);
         Files.createDirectory(snapshot);
         try {
@@ -94,15 +104,16 @@ public final class G925ProfileReportTest {
             }
         }
         Files.delete(snapshot);
-        check(G925NativeProfileReport.summarize(root, started + 1, "LABELED_FALLBACK")
-                .contains("LABELED_FALLBACK"));
+        check(G925NativeProfileReport.summarize(root, started + 1, "LABELED_FALLBACK") == null);
         check(report.contains("Samples: 3"));
         check(report.contains("GPU frame: avg=25.00 p95=30.00 max=30.00 (n=2)"));
         check(report.contains("Title frame interval: avg=50.00 p95=60.00 max=60.00 (n=3)"));
         check(report.contains("GPU fence wait (CPU): unavailable"));
         check(G925NativeProfileReport.summarize(root, csv.toFile().lastModified() + 10000, applied) == null);
         check(G925NativeProfileReport.summarize(root, Long.MAX_VALUE, applied) == null);
+        check(G925NativeProfileReport.summarize(root, 0, applied) == null);
         // Detail must belong to exactly the same frame/sequence identities.
+        publishInGameProcess(root, started, 16);
         Files.writeString(csv, "frame,capture_sequence,gpu_frame_ms,cpu_frame_interval_ms\n"
                 + "1,7,20,40\n2,8,,50\n3,9,30,60\n");
         Path cpu = diagnostics.resolve("native-performance-cpu.csv");
@@ -120,9 +131,21 @@ public final class G925ProfileReportTest {
         check(detailed.contains("record / record-command: self=9.000 ms calls/frame=20.0 peak-call=7.000 ms"));
         check(detailed.contains("record / surface-image-lookup: self=2.667 ms calls/frame=6.7 peak-call=1.000 ms"));
         check(!detailed.contains("unrelated-capture"));
-        check(detailed.contains("n=3):"));
+        check(detailed.contains("n=3/3):"));
+        // The production delayed trigger arms after the first callback's CPU
+        // recorder decision. Keep frames 2/3, with denominator 2 (never 3).
+        String partial = details.lines().filter(line -> !line.startsWith("1,7,"))
+                .collect(java.util.stream.Collectors.joining("\n", "", "\n"));
+        Files.writeString(cpu, header + partial);
+        String subset = G925NativeProfileReport.summarize(root, started, applied);
+        check(subset.contains("n=2/3):"));
+        check(subset.contains("CPU detail missing for 1 captured frame(s)"));
+        check(subset.contains("self=10.500 ms calls/frame=25.0 peak-call=7.000 ms"));
+        check(!subset.contains("unrelated-capture"));
+        Files.writeString(cpu, header + "999,999,record,unrelated-capture,1,999,999,999\n");
+        check(G925NativeProfileReport.summarize(root, started, applied)
+                .contains("CPU operation detail: unavailable"));
         for (String bad : List.of(
-                details.replace("3,9", "3,10"),
                 details + "1,7,record,record-command,10,30,6,5\n",
                 details.replace(",30,6,", ",30,NaN,"),
                 details.replace(",30,6,", ",30,,"),
@@ -149,7 +172,35 @@ public final class G925ProfileReportTest {
         Files.setLastModifiedTime(cpu, java.nio.file.attribute.FileTime.fromMillis(detailTime));
         check(G925NativeProfileReport.summarize(root, started, applied)
                 .contains("CPU operation detail: unavailable"));
-        System.out.println("PASS: matched CPU detail, exclusive averages, missing/duplicate/invalid/stale data rejected");
+        // Fresh captures remove only the old report inputs, including files
+        // with future timestamps. Config and unrelated diagnostics are kept.
+        Path keep = diagnostics.resolve("native-performance-latest.log");
+        Files.writeString(keep, "keep old diagnostic log");
+        String config = Files.readString(nativeDir.resolve("native.toml"));
+        Files.setLastModifiedTime(csv, java.nio.file.attribute.FileTime.fromMillis(
+                System.currentTimeMillis() + 86400000L));
+        long fresh = G925NativeProfileReport.beginCapture(root);
+        check(fresh > 0 && !Files.exists(csv) && !Files.exists(cpu) && !Files.exists(snapshot));
+        check(Files.readString(keep).equals("keep old diagnostic log"));
+        check(Files.readString(nativeDir.resolve("native.toml")).equals(config));
+        check(G925NativeProfileReport.summarize(root, fresh, applied) == null);
+        publishInGameProcess(root, fresh, 16);
+        check(G925NativeProfileReport.summarize(root, fresh, applied) == null);
+        Files.writeString(csv, "frame,gpu_frame_ms,cpu_frame_interval_ms\n1,18,35\n");
+        Files.setLastModifiedTime(csv, java.nio.file.attribute.FileTime.fromMillis(fresh + 1000));
+        check(G925NativeProfileReport.summarize(root, fresh, applied)
+                .contains("GPU frame: avg=18.00"));
+        Files.delete(csv);
+        Files.createDirectory(csv);
+        Files.writeString(csv.resolve("keep.txt"), "not a capture file");
+        try {
+            G925NativeProfileReport.beginCapture(root);
+            throw new AssertionError("Invalid capture input must abort preparation");
+        } catch (java.io.IOException expected) {
+            check(Files.exists(csv.resolve("keep.txt")));
+        }
+        System.out.println("PASS: missing first CPU detail frame excluded with explicit coverage; matching, invalid and duplicate rows checked");
+        System.out.println("PASS: old-build/missing-build captures rejected; fresh capture cleanup, failure and new completion checked");
         System.out.println("PASS: separate-process snapshots, exact launch identity, atomic replacement, bounded reads, precedence, privacy, CSV and stale capture");
     }
 }

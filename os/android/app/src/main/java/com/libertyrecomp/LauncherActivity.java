@@ -1486,7 +1486,7 @@ public class LauncherActivity extends Activity {
             final String shared = report;
             mMain.post(() -> {
                 if (shared == null || shared.isEmpty()) {
-                    toast("No new capture yet. Run CAPTURE CPU + GPU BOTTLENECK, "
+                    toast("No new capture from this app version yet. Run CAPTURE CPU + GPU BOTTLENECK, "
                             + "play at least 85 seconds, then return here.");
                     return;
                 }
@@ -2352,19 +2352,32 @@ public class LauncherActivity extends Activity {
             // started with; end it so this launch uses the current choice.
             stopGameProcess();
             DebugLog.stopLeftovers(mDataRoot);
+            final long captureStartedAt;
+            if (nativeProfile) {
+                try {
+                    captureStartedAt = G925NativeProfileReport.beginCapture(mDataRoot);
+                    boolean saved = getSharedPreferences("g925_native_profile", MODE_PRIVATE)
+                            .edit().putLong("capture_started", captureStartedAt)
+                            .putString("capture_settings",
+                                    G925NativeProfileReport.captureSettings(mDataRoot))
+                            .commit();
+                    if (!saved) throw new IOException("Capture identity was not saved");
+                } catch (IOException e) {
+                    Log.w(TAG, "Unable to prepare a fresh native capture", e);
+                    mMain.post(() -> {
+                        setBusy(false, null);
+                        toast("Unable to prepare a fresh capture. Please try again.");
+                    });
+                    return;
+                }
+            } else {
+                captureStartedAt = 0;
+            }
             mMain.post(() -> {
                 setBusy(false, null);
                 Intent intent = new Intent(this, LibertyActivity.class);
                 if (debugLog) intent.putExtra(LibertyActivity.EXTRA_DEBUG_LOG, true);
                 if (nativeProfile) {
-                    // Check the CSV timestamp when sharing so an earlier run
-                    // can never be mistaken for the current hardware test.
-                    long captureStartedAt = System.currentTimeMillis();
-                    getSharedPreferences("g925_native_profile", MODE_PRIVATE)
-                            .edit().putLong("capture_started", captureStartedAt)
-                            .putString("capture_settings",
-                                    G925NativeProfileReport.captureSettings(mDataRoot))
-                            .commit();
                     intent.putExtra(LibertyActivity.EXTRA_G925_NATIVE_PROFILE, true);
                     intent.putExtra(LibertyActivity.EXTRA_G925_NATIVE_PROFILE_STARTED,
                             captureStartedAt);

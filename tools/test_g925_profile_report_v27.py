@@ -13,7 +13,7 @@ compiler = [javac] if javac else [java, '-m', 'jdk.compiler/com.sun.tools.javac.
 with tempfile.TemporaryDirectory(prefix='g925-report-') as tmp:
     path = Path(tmp)
     stub = path / 'BuildConfig.java'
-    stub.write_text('package com.libertyrecomp; final class BuildConfig { static final String VERSION_NAME = "2.7-test"; }\n')
+    stub.write_text('package com.libertyrecomp; final class BuildConfig { static final String VERSION_NAME = "2.10-test"; }\n')
     output = path / 'classes'
     output.mkdir()
     fixture = path / 'fixture'

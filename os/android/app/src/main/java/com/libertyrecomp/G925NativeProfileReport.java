@@ -8,6 +8,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -140,12 +141,31 @@ final class G925NativeProfileReport {
     private static final String APPLIED_SETTINGS_FILE = "g925-native-launch-settings.txt";
     private static final int MAX_SETTINGS_BYTES = 16384;
 
+    // Called after stopping the previous game process and before starting a
+    // capture. A failed/new capture must never expose a previous capture's CSV.
+    static long beginCapture(File root) throws IOException {
+        if (root == null || !root.isDirectory()) throw new IOException("Missing capture root");
+        File diagnostics = new File(new File(root, "LibertyRecomp"), "Diagnostics");
+        for (File file : new File[] {new File(root, APPLIED_SETTINGS_FILE),
+                new File(diagnostics, "native-performance-latest.csv"),
+                new File(diagnostics, "native-performance-cpu.csv")}) {
+            if (file.isDirectory()) throw new IOException("Invalid capture file");
+            Files.deleteIfExists(file.toPath());
+        }
+        return System.currentTimeMillis();
+    }
+
+    private static String captureHeader(long started) {
+        return "capture_started=" + started + '\n'
+                + "capture_build=" + BuildConfig.VERSION_NAME + '\n';
+    }
+
     static void saveAppliedSettings(File root, long captureStartedAt, List<String> arguments)
             throws IOException {
         if (root == null || captureStartedAt <= 0 || captureStartedAt == Long.MAX_VALUE) return;
         File temporary = File.createTempFile("g925-launch-", ".tmp", root);
         try {
-            String snapshot = "capture_started=" + captureStartedAt + '\n'
+            String snapshot = captureHeader(captureStartedAt)
                     + captureAppliedSettings(root, arguments);
             Files.write(temporary.toPath(), snapshot.getBytes(StandardCharsets.UTF_8));
             Files.move(temporary.toPath(), new File(root, APPLIED_SETTINGS_FILE).toPath(),
@@ -171,7 +191,7 @@ final class G925NativeProfileReport {
         }
         if (used > MAX_SETTINGS_BYTES) return null;
         String content = new String(bytes, 0, used, StandardCharsets.UTF_8);
-        String header = "capture_started=" + captureStartedAt + '\n';
+        String header = captureHeader(captureStartedAt);
         if (!content.startsWith(header)) return null;
         String settings = content.substring(header.length());
         return settings.startsWith("Launch-time config (") && settings.endsWith("\n")
@@ -180,15 +200,19 @@ final class G925NativeProfileReport {
 
     static String summarize(File dataRoot, long captureStartedAt, String launchSettings)
             throws IOException {
-        if (dataRoot == null || captureStartedAt == Long.MAX_VALUE) return null;
+        if (dataRoot == null || captureStartedAt <= 0 || captureStartedAt == Long.MAX_VALUE) return null;
         File csv = new File(new File(new File(dataRoot, "LibertyRecomp"),
                 "Diagnostics"), "native-performance-latest.csv");
-        if (!csv.isFile() || csv.lastModified() < captureStartedAt) return null;
+        if (!csv.isFile() || csv.lastModified() < captureStartedAt
+                || csv.length() > 16 * 1024 * 1024) return null;
         try {
-            String applied = readAppliedSettings(dataRoot, captureStartedAt);
-            if (applied != null) launchSettings = applied;
+            // A stored launcher preference survives app upgrades. Require the
+            // game process's exact launch AND build identity before labeling CSV
+            // measurements with this version. The old fallback cannot prove it.
+            launchSettings = readAppliedSettings(dataRoot, captureStartedAt);
+            if (launchSettings == null) return null;
         } catch (IOException ignored) {
-            // Retain the launcher's labeled pre-launch fallback.
+            return null;
         }
         List<Double>[] metrics = new List[METRICS.length];
         for (int i = 0; i < metrics.length; ++i) metrics[i] = new ArrayList<>();
@@ -241,6 +265,8 @@ final class G925NativeProfileReport {
                 .append("Blank measurements are NOT zero.\n")
                 .append("CPU ranges may overlap: do not sum them.\n")
                 .append("Build: ").append(BuildConfig.VERSION_NAME).append('\n')
+                .append("Capture started (UTC): ").append(Instant.ofEpochMilli(captureStartedAt))
+                .append('\n')
                 .append("Samples: ").append(count).append("\n");
         if (launchSettings != null && !launchSettings.isEmpty()) {
             result.append(launchSettings);
@@ -336,18 +362,25 @@ final class G925NativeProfileReport {
                 if (!Double.isFinite(total[0]) || !Double.isFinite(total[1])) return null;
             }
         }
-        // Missing detail frames must not be presented as zero-cost work.
-        if (!seenFrames.equals(frames) || groups.isEmpty()) return null;
+        // The delayed native trigger can arm inside the first callback, after
+        // its CPU recorder decision. Keep the other measured frames and expose
+        // coverage; missing frames never enter the denominator as zero cost.
+        if (seenFrames.isEmpty() || groups.isEmpty()) return null;
         List<Map.Entry<String, double[]>> sorted = new ArrayList<>(groups.entrySet());
         sorted.sort((a, b) -> Double.compare(b.getValue()[0], a.getValue()[0]));
         StringBuilder result = new StringBuilder("\nTop CPU operations (self time excludes child scopes; "
-                + "averages per captured frame, n=" + frames.size() + "):\n");
+                + "averages per frame with CPU detail, n=" + seenFrames.size() + "/"
+                + frames.size() + "):\n");
+        if (seenFrames.size() != frames.size()) {
+            result.append("CPU detail missing for ").append(frames.size() - seenFrames.size())
+                    .append(" captured frame(s); excluded from these averages.\n");
+        }
         for (int i = 0; i < Math.min(8, sorted.size()); ++i) {
             Map.Entry<String, double[]> entry = sorted.get(i);
             double[] total = entry.getValue();
             result.append(String.format(Locale.US,
                     "%s: self=%.3f ms calls/frame=%.1f peak-call=%.3f ms\n",
-                    entry.getKey(), total[0] / frames.size(), total[1] / frames.size(), total[2]));
+                    entry.getKey(), total[0] / seenFrames.size(), total[1] / seenFrames.size(), total[2]));
         }
         return result.toString();
     }
