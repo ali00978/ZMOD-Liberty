@@ -43,6 +43,19 @@ The 2.6 native step took about 44 minutes. Sccache reported 42 hits / 971 misses
 
 The full workflow took 23 minutes 36 seconds, versus 55 minutes 16 seconds for 2.6. The 2.6 build-directory cache was restored. Sccache recorded 927 hits / 86 misses (91.51%), zero read/write errors and zero noncacheable compilations. The resulting APK is the native baseline for the final Java-only report correction. These are build-time measurements, not gameplay FPS measurements.
 
+## Verified APK delivery (2026-11-03)
+
+Final packaging build: https://github.com/ali00978/ZMOD-Liberty/actions/runs/41659074125 — successful, 9 minutes 52 seconds.
+
+- APK source commit: `89853f5e6ccb24d77a6cff968e9d6526d55e9892`.
+- Native source commit: `a04b52b087b648a710ffab7593143793a82b3151`; successful full build above.
+- APK: `ZMOD_Liberty_2.7_Mali_ARMv9.apk`, 49,476,373 bytes.
+- APK SHA-256: `e91d1951853a9881c39dbd73790b713266b653b28b07a682c23b3fd8b6642ee2`.
+- APK v2 signature and content digest verified. Package `com.libertyrecomp`, version code 35; signing certificate matches the working 2.6 APK (version code 34).
+- All 11 native library hashes and all 472 packaged resource files match the verified 2.7 full build exactly. The manifest matches that build; default arguments also match 2.6.
+- The final DEX files contain the new cross-process snapshot and exact launch-token path. The final source-compatibility checks, nine existing APK regressions and separate-process Java tests passed in CI.
+- Device installation, visual correctness and gameplay speed remain unmeasured here; a successful build and signature check are not an on-device performance result.
+
 ## Remaining limits and one device test
 
 At the supplied 2.6 sample, recording is 22.52 ms average / 28.42 ms P95; GPU time is 20.89 / 28.79 ms, total title interval 38.59 / 51.49 ms. CPU ranges overlap. Even if CPU submission improved substantially, the measured GPU workload is above the 16.67 ms budget for 60 FPS. This batch reduces redundant CPU/driver command work; it does not claim less shading, guaranteed 60 FPS, or a measured percentage gain.
