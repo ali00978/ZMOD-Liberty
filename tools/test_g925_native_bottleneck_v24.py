@@ -14,15 +14,15 @@ assert '--gta4_profile_native_autostart=false' in activity
 assert '--gta4_profile_native_capture_delay_seconds=65' in activity
 assert '--gta4_profile_native_samples=180' in activity
 assert '--gta4_profile_native_gpu_query_budget=64' in activity
-assert 'CAPTURE 30 FPS BOTTLENECK' in launcher
+assert 'CAPTURE CPU + GPU BOTTLENECK' in launcher
 assert 'SHARE NATIVE CPU + GPU REPORT' in launcher
 assert 'play(true, true)' in launcher
-assert 'G925NativeProfileReport.summarize(mDataRoot, started)' in launcher
+assert 'G925NativeProfileReport.summarize(mDataRoot, started, settings)' in launcher
 assert 'csv.lastModified() < captureStartedAt' in report
 assert 'cpu_fence_wait_ms' in report
 assert 'cpu_command_recording_ms' in report
 assert 'gpu_frame_ms' in report
 assert 'Values are not' not in report
 assert '"frame-interval"' in native
-assert 'branches: [feature/g925-batched-render-cpu-v25]' in flow
+assert 'branches: [feature/g925-stable-16ms-v26]' in flow
 print("PASS: delayed native profiling; actual frame timings; source CSV filtered to no-private-data summary")
