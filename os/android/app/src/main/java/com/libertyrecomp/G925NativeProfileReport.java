@@ -11,6 +11,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /** Read-only, bounded native profiling summary; never reads game files. */
 final class G925NativeProfileReport {
@@ -34,7 +36,61 @@ final class G925NativeProfileReport {
         {"counter_texture_upload_bytes", "Texture bytes / frame"}
     };
 
-    static String summarize(File dataRoot, long captureStartedAt) throws IOException {
+    // Snapshot explicit performance settings when Capture is tapped, not later
+    // when the report is shared. Read only whitelisted keys from local launcher
+    // configuration; never include paths, user content or device identifiers.
+    private static final String[][] CAPTURE_SETTINGS = {
+        {"android_performance_hint", "Android performance hints"},
+        {"android_performance_hint_target_ms", "CPU hint target (ms)"},
+        {"android_performance_hint_report_interval_ms", "CPU feedback interval (ms)"},
+        {"android_performance_hint_stable_threads", "Stable CPU hint threads"},
+        {"gta4_frame_limit", "Launcher frame cap"},
+        {"gta4_output_height_cap", "Launcher output height"},
+        {"gta4_native_anti_aliasing", "Launcher anti-aliasing"}
+    };
+
+    static String captureSettings(File root) {
+        Map<String, String> values = new LinkedHashMap<>();
+        if (root != null) {
+            for (String fileName : new String[] {"args.txt", "graphics.txt"}) {
+                File file = new File(root, fileName);
+                if (!file.isFile()) continue;
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                        new FileInputStream(file), StandardCharsets.UTF_8))) {
+                    String line;
+                    int lines = 0;
+                    while (lines++ < 2000 && (line = reader.readLine()) != null) {
+                        line = line.trim();
+                        int equals = line.indexOf('=');
+                        if (!line.startsWith("--") || equals <= 2) continue;
+                        String key = line.substring(2, equals);
+                        boolean allowed = false;
+                        for (String[] setting : CAPTURE_SETTINGS) {
+                            if (setting[0].equals(key)) { allowed = true; break; }
+                        }
+                        if (!allowed) continue;
+                        String value = line.substring(equals + 1).trim();
+                        // Only small, simple settings values are shareable.
+                        if (value.matches("[a-zA-Z0-9_.-]{1,32}")) values.put(key, value);
+                    }
+                } catch (IOException ignored) {
+                    // The report still works when configuration is unavailable.
+                }
+            }
+        }
+        StringBuilder snapshot = new StringBuilder();
+        snapshot.append("Launch-time config (explicit launcher/args overrides only):\\n");
+        for (String[] setting : CAPTURE_SETTINGS) {
+            snapshot.append(setting[1]).append(": ")
+                    .append(values.getOrDefault(setting[0], "default / in-game"))
+                    .append('\\n');
+        }
+        snapshot.append("16 ms CPU feedback is NOT an FPS cap; in-game options may differ.\\n");
+        return snapshot.toString();
+    }
+
+    static String summarize(File dataRoot, long captureStartedAt, String launchSettings)
+            throws IOException {
         if (dataRoot == null || captureStartedAt == Long.MAX_VALUE) return null;
         File csv = new File(new File(new File(dataRoot, "LibertyRecomp"),
                 "Diagnostics"), "native-performance-latest.csv");
@@ -84,7 +140,12 @@ final class G925NativeProfileReport {
                 .append("GPU frame time is a Vulkan timestamp if supported. ")
                 .append("Blank measurements are NOT zero.\n")
                 .append("CPU ranges may overlap: do not sum them.\n")
-                .append("Samples: ").append(count).append("\n\n");
+                .append("Build: ").append(BuildConfig.VERSION_NAME).append('\\n')
+                .append("Samples: ").append(count).append("\\n");
+        if (launchSettings != null && !launchSettings.isEmpty()) {
+            result.append(launchSettings);
+        }
+        result.append('\\n');
         for (int i = 0; i < METRICS.length; ++i) {
             List<Double> values = metrics[i];
             if (values.isEmpty()) {
