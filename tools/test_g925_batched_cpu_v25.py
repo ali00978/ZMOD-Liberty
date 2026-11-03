@@ -19,6 +19,6 @@ assert 'stencil_face_probe == "original" &&' in src
 assert 'std::memcpy(bytes.data() + used, &value, sizeof(value));' in hash_src
 assert 'return XXH3_64bits_withSeed(bytes.data(), used, 0);' in hash_src
 assert 'std::array<uint8_t, sizeof(State)> bytes;' in hash_src
-assert 'versionCode   = 33' in gradle
-assert 'branches: [feature/g925-batched-render-cpu-v25]' in flow
+assert 'versionCode   = 34' in gradle
+assert 'branches: [feature/g925-stable-16ms-v26]' in flow
 print("PASS: no disabled probe work, only one diagnostic read/frame, unchanged fixed-state fidelity")
