@@ -67,6 +67,19 @@ int main() {
   key.index32 = false; key.restart_index = UINT16_MAX;
   Verify(key, {1, UINT16_MAX, 7, 9});
 
+  // All-ones restart sentinel is byte-for-byte identical to the original
+  // GPU index representation. Exercise the native bulk-copy fast path with
+  // unaligned inputs and destination guards (Verify checks both).
+  key = {91, 1, 4, UINT32_MAX, UINT32_MAX, NativeIndexConversion::kRestart, true};
+  Verify(key, {123, UINT32_MAX, 0, 0xAB000123u, 7, 9});
+  key = {92, 1, 4, UINT16_MAX, 0, NativeIndexConversion::kRestart, false};
+  Verify(key, {123, UINT16_MAX, 0, 53, 7, 9});
+  // An all-ones *masked* 32-bit marker still needs conversion, even though
+  // its low 24 bits look like the native restart marker.
+  key = {93, 0, 4, 0x00FFFFFF, 0x00FFFFFF,
+         NativeIndexConversion::kRestart, true};
+  Verify(key, {0xAAFFFFFFu, 0x00FFFFFFu, 123, 0xAABBCCDDu});
+
   std::mt19937 random(92529);
   for (uint32_t replay = 0; replay < 20000; ++replay) {
     key.generation = replay + 1;
