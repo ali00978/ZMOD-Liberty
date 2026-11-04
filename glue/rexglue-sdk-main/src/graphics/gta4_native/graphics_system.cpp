@@ -20839,7 +20839,11 @@ void Gta4NativeGraphicsSystem::ReleaseUnusedBufferResources(uint32_t submitted_f
 
   constexpr uint64_t kBytesPerMiB = 1048576ull;
   const uint64_t cache_limit = uint64_t(kNativeBufferCacheLimitMiB) * kBytesPerMiB;
-  std::vector<Candidate> candidates;
+  // The bounded background sweep may resume on several consecutive title
+  // frames. Reuse the CPU-only candidate capacity per render worker rather
+  // than allocating an entire vector again on each continued sweep.
+  static thread_local std::vector<Candidate> candidates;
+  candidates.clear();
   uint64_t cache_bytes = 0;
   {
     std::lock_guard lock(buffer_resource_mutex_);
