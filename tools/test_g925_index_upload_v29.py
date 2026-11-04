@@ -20,6 +20,11 @@ assert 'converted_index_uploads.CanResetGeneration()' in header
 assert 'converted_index_uploads.ResetGeneration()' in header
 assert 'const auto reset_recording_resources = MakeScopeExit(' in src
 assert 'return NativeQuadIndexCount(quad_list_index_count);' in src
+converted=(SDK/'src/graphics/gta4_native/native_index_conversion.h').read_text()
+assert 'key.index_mask == UINT32_MAX' in converted
+assert 'key.restart_index == UINT16_MAX' in converted
+assert 'std::memcpy(destination.data(), source.data() + size_t(key.first) * element,' in converted
+assert 'values such as 0xAAFFFFFF' in converted
 compiler=os.environ.get('G925_TEST_CXX') or shutil.which('g++') or shutil.which('clang++')
 if not compiler: raise SystemExit('A C++20 host compiler is required')
 with tempfile.TemporaryDirectory(prefix='g925-indices-') as tmp:
