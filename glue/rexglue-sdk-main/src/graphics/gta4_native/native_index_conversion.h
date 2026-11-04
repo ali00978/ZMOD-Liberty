@@ -55,6 +55,22 @@ inline bool WriteNativeConvertedIndices(std::span<const uint8_t> source,
   }
   if (!output_count || uint64_t(key.first) + key.count > source.size() / element ||
       uint64_t(output_count) * element > destination.size()) return false;
+
+  // Primitive restart with the full-width all-ones sentinel is already in
+  // Vulkan's native representation. Copy the exact source bytes instead of
+  // reading and rewriting every index individually. The source/destination
+  // bounds have been checked above and the non-overlap contract is unchanged.
+  // For masked 32-bit restart markers, conversion remains mandatory because
+  // values such as 0xAAFFFFFF must become 0xFFFFFFFF.
+  if (key.conversion == NativeIndexConversion::kRestart &&
+      ((!key.index32 && key.restart_index == UINT16_MAX) ||
+       (key.index32 && key.index_mask == UINT32_MAX &&
+        key.restart_index == UINT32_MAX))) {
+    std::memcpy(destination.data(), source.data() + size_t(key.first) * element,
+                size_t(key.count) * element);
+    return true;
+  }
+
   const auto read = [&](uint32_t i) {
     uint32_t value = 0;
     const uint8_t* p = source.data() + (size_t(key.first) + i) * element;
