@@ -56,3 +56,20 @@ work. The single phone benchmark should wait for the whole batch to pass CI.
 
 Known-good v2.15:
 https://github.com/ali00978/ZMOD-Liberty/actions/runs/41763984704
+
+## FPS-drop / frame-spike mitigation (same 2.16 release)
+
+The maintenance path previously destroyed up to 12 completed native
+Vulkan surfaces in a single ordinary frame, and reclaimed up to 16
+under-budget host buffers (4 MiB). To reduce occasional CPU frame spikes,
+normal-frame work is now limited to **6 surfaces** and **8 host buffers
+(2 MiB)**. GPU-in-flight resources are still protected by the existing
+completed-submission fence; paused/forced drains retain their unlimited
+cleanup behavior, and **over-budget emergency reclamation remains 64
+buffers/16 MiB**. This is bounded spreading of cleanup work, not
+disabling resource reclamation or retaining unlimited memory.
+
+A second compiled C++ test validates normal/emergency/forced cleanup
+budgets and in-flight resource safety. It runs as part of the same
+mandatory 2.16 CI test step. Device impact on FPS drops is not yet
+measured.
