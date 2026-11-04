@@ -21037,7 +21037,6 @@ void Gta4NativeGraphicsSystem::ReleasePendingSurfaceImages(bool force_drain) {
     return;
   }
   size_t retired_surface_count = 0;
-  const size_t retire_limit = NativeSurfaceRetirementLimit(force_drain);
   std::unordered_set<uint64_t> still_pending_ids;
   for (auto image = native_surface_images_.begin(); image != native_surface_images_.end();) {
     if (!*image || !pending_surface_release_ids_.contains((*image)->lifetime_id)) {
@@ -21046,8 +21045,9 @@ void Gta4NativeGraphicsSystem::ReleasePendingSurfaceImages(bool force_drain) {
     }
     // Keep GPU-in-flight and over-budget lifetimes pending and invisible to
     // fresh draws. Cleanup can continue in the next presentation frame.
-    if ((*image)->last_used_submission > completed_command_buffer_submission_ ||
-        retired_surface_count >= retire_limit) {
+    if (ShouldKeepNativeSurfacePending((*image)->last_used_submission,
+                                       completed_command_buffer_submission_,
+                                       retired_surface_count, force_drain)) {
       still_pending_ids.insert((*image)->lifetime_id);
       ++image;
       continue;
