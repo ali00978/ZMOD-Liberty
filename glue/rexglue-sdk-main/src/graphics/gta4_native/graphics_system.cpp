@@ -21037,21 +21037,24 @@ void Gta4NativeGraphicsSystem::ReleasePendingSurfaceImages(bool force_drain) {
     return;
   }
   size_t retired_surface_count = 0;
-  std::unordered_set<uint64_t> still_pending_ids;
+  // Keep the authoritative pending set in place. Rebuilding a second hash
+  // table every frame would allocate and hash one node per deferred surface,
+  // creating precisely the stutter that staged destruction should avoid.
   for (auto image = native_surface_images_.begin(); image != native_surface_images_.end();) {
+    if (retired_surface_count >= NativeSurfaceRetirementLimit(force_drain)) break;
     if (!*image || !pending_surface_release_ids_.contains((*image)->lifetime_id)) {
       ++image;
       continue;
     }
-    // Keep GPU-in-flight and over-budget lifetimes pending and invisible to
-    // fresh draws. Cleanup can continue in the next presentation frame.
+    // No new draw may reuse a pending lifetime. The original GPU completion
+    // condition remains authoritative; budget-limited releases stay queued.
     if (ShouldKeepNativeSurfacePending((*image)->last_used_submission,
                                        completed_command_buffer_submission_,
                                        retired_surface_count, force_drain)) {
-      still_pending_ids.insert((*image)->lifetime_id);
       ++image;
       continue;
     }
+    const uint64_t release_id = (*image)->lifetime_id;
     NativeSurfaceImage* retired_image = image->get();
     for (auto owner = native_placement_owners_.begin(); owner != native_placement_owners_.end();) {
       if (owner->second.image == retired_image) {
@@ -21062,6 +21065,10 @@ void Gta4NativeGraphicsSystem::ReleasePendingSurfaceImages(bool force_drain) {
     }
     DestroyNativeSurfaceImage(*retired_image);
     image = native_surface_images_.erase(image);
+    // This is the only per-frame lifetime removal path; shutdown clears
+    // both containers. Erase just the completed ID instead of reallocating
+    // the entire still-pending set every presentation frame.
+    pending_surface_release_ids_.erase(release_id);
     ++retired_surface_count;
   }
   if (retired_surface_count &&
@@ -21070,7 +21077,6 @@ void Gta4NativeGraphicsSystem::ReleasePendingSurfaceImages(bool force_drain) {
                 retired_surface_count, native_surface_images_.size(),
                 native_placement_owners_.size());
   }
-  pending_surface_release_ids_.swap(still_pending_ids);
 }
 
 Gta4NativeGraphicsSystem::NativeSurfaceImage* Gta4NativeGraphicsSystem::GetOrCreateSurfaceImage(
