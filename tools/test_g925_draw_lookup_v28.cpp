@@ -50,6 +50,36 @@ int main() {
   assert(!collisions.Find(key, 1));
   assert(collisions.Find(changed, 1) == &image);
 
+  // Two exact keys with the same original surface handle and same cache-set
+  // hash must coexist; the old direct-mapped cache thrashed on every A/B draw.
+  NativeSurfaceLookupCache<Image, 2> two_way;
+  Image alternate_image{2}, third_image{3};
+  auto alternate = key;
+  alternate.descriptor[5] ^= 7;  // Format changes, handle and hash unchanged.
+  auto third = key;
+  third.descriptor[7] += 5;  // Geometry changes, handle and hash unchanged.
+  two_way.Store(key, 1, &image);
+  two_way.Store(alternate, 1, &alternate_image);
+  for (size_t i = 0; i < 500; ++i) {
+    assert(two_way.Find(key, 1) == &image);
+    assert(two_way.Find(alternate, 1) == &alternate_image);
+  }
+  two_way.Store(third, 1, &third_image);
+  assert(two_way.Find(third, 1) == &third_image);
+  assert((two_way.Find(key, 1) != nullptr) !=
+         (two_way.Find(alternate, 1) != nullptr));
+  two_way.Store(key, 2, &image);  // New registry revision invalidates old keys.
+  assert(two_way.Find(key, 2) == &image);
+  assert(!two_way.Find(alternate, 2));
+  two_way.Invalidate();  // Epoch invalidation must make every pointer unobservable.
+  assert(!two_way.Find(key, 2) && !two_way.Find(third, 1));
+  for (size_t epoch = 0; epoch < 10000; ++epoch) {
+    two_way.Store(alternate, epoch + 3, &alternate_image);
+    assert(two_way.Find(alternate, epoch + 3) == &alternate_image);
+    two_way.Invalidate();
+    assert(!two_way.Find(alternate, epoch + 3));
+  }
+
   // Simulate recording over creation, release, descriptor/registry changes and
   // reused handles; compare hits against an independently maintained lifetime.
   std::mt19937 random(92528);
