@@ -31,7 +31,17 @@ class NativeResolveDescriptorCache {
   }
   void Insert(const Key& key, Descriptor descriptor) {
     if (!descriptor || !Valid(key)) return;
-    if (entries_.size() >= kCapacity) entries_.clear();
+    // Duplicate inserts must leave the existing valid handle untouched,
+    // especially at capacity. The old path cleared all 256 entries before
+    // checking for duplicates, causing a burst of redundant allocations.
+    if (entries_.find(key) != entries_.end()) return;
+    // Pre-size the per-command-pool map once; Reset()/clear() keeps the
+    // buckets for the next recording scope without keeping old handles.
+    if (entries_.empty()) entries_.reserve(kCapacity);
+    // A new descriptor only displaces ONE old entry, not the entire cache.
+    // The unordered_map entry is deliberately an arbitrary victim: descriptor
+    // validity is still controlled by the exact key and BeginScope/Reset.
+    if (entries_.size() >= kCapacity) entries_.erase(entries_.begin());
     if (entries_.emplace(key, descriptor).second) ++statistics_.inserts;
   }
   const Statistics& statistics() const { return statistics_; }
