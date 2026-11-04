@@ -134,6 +134,23 @@ int main() {
   assert(memo.Find(other) && !memo.Find(other)->valid);
   memo.Store(other, {0, true});  // An empty valid input layout is not failure.
   assert(memo.Find(other)->valid && !memo.Find(other)->mask);
+  // Two exact layouts should coexist; immutable pipeline snapshots can
+  // alternate A/B declarations without recalculating their stream masks.
+  for (unsigned i = 0; i < 10000; ++i) {
+    assert(memo.Find(layout) && memo.Find(layout)->mask == 65537);
+    assert(memo.Find(other) && memo.Find(other)->valid && memo.Find(other)->mask == 0);
+  }
+  memo.Store(layout, {37, true});  // Existing earlier entry is promoted.
+  assert(memo.Find(layout) && memo.Find(layout)->mask == 37);
+  assert(memo.Find(other) && memo.Find(other)->mask == 0);
+  auto third_layout = other;
+  ++third_layout.declaration_hash;
+  memo.Store(third_layout, {99, true});
+  assert(memo.Find(third_layout) && memo.Find(third_layout)->mask == 99);
+  assert(memo.Find(layout) && memo.Find(layout)->mask == 37);
+  assert(!memo.Find(other));  // Older entry is evicted, never aliased.
+  auto snapshot_copy = memo;
+  assert(snapshot_copy.Find(layout) && snapshot_copy.Find(third_layout));
   // Sparse stream iteration must visit exactly the original stream set.
   for (uint32_t mask = 0; mask < (1u << 17); ++mask) {
     uint32_t visited = 0, previous = 0;
