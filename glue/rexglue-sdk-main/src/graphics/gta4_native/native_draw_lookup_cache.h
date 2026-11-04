@@ -85,6 +85,13 @@ class NativeSurfaceLookupCache {
   static size_t SetIndex(const NativeSurfaceLookupKey& key) {
     uint32_t h = key.descriptor[0] * 0x9E3779B9u;
     h ^= h >> 16;
+    // The handle alone clustered every format, address and size variant of
+    // the same render target into one two-way set. Fold in a few cheap exact
+    // descriptor fields so a title alternating 3+ variants can keep them in
+    // separate sets without increasing cache capacity or GPU memory usage.
+    h ^= key.descriptor[5] * 0x85EBCA6Bu;  // image format
+    h ^= key.descriptor[4] * 0xC2B2AE35u;  // dimensions/packing
+    h ^= key.descriptor[3] * 0x27D4EB2Du;  // guest address
     return (h ^ (key.samples * 17u) ^ uint32_t(key.depth)) & (kSetCount - 1);
   }
   struct Entry {
