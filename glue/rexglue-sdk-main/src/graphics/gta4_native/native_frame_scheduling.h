@@ -37,6 +37,14 @@ inline constexpr size_t kNativeSurfaceRetirementsPerFrame = 12;
 constexpr size_t NativeSurfaceRetirementLimit(bool force_drain) {
   return force_drain ? size_t(-1) : kNativeSurfaceRetirementsPerFrame;
 }
+constexpr bool ShouldKeepNativeSurfacePending(uint64_t last_used_submission,
+                                              uint64_t completed_submission,
+                                              size_t retired_this_frame, bool force_drain) {
+  // A GPU-in-flight resource is never destroyed; budget exhaustion only
+  // delays a completed release until a later housekeeping pass.
+  return last_used_submission > completed_submission ||
+         retired_this_frame >= NativeSurfaceRetirementLimit(force_drain);
+}
 
 // Aged, under-budget host buffers can be reclaimed over several frames,
 // avoiding a sudden 64-resource/16 MiB CPU destructor burst. Under memory
