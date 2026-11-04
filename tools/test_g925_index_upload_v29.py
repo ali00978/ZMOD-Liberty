@@ -25,6 +25,9 @@ assert 'key.index_mask == UINT32_MAX' in converted
 assert 'key.restart_index == UINT16_MAX' in converted
 assert 'std::memcpy(destination.data(), source.data() + size_t(key.first) * element,' in converted
 assert 'values such as 0xAAFFFFFF' in converted
+assert 'std::memcpy(dst, src, 3 * element);' in converted
+assert 'std::memcpy(dst + 3 * element, src, element);' in converted
+assert 'std::memcpy(dst + 4 * element, src + 2 * element, 2 * element);' in converted
 compiler=os.environ.get('G925_TEST_CXX') or shutil.which('g++') or shutil.which('clang++')
 if not compiler: raise SystemExit('A C++20 host compiler is required')
 with tempfile.TemporaryDirectory(prefix='g925-indices-') as tmp:
