@@ -21,11 +21,25 @@ class NativeResolveDescriptorCache {
       Reset(); command_buffer_ = command_buffer; pool_ = pool;
     }
   }
-  void Reset() { entries_.clear(); command_buffer_ = pool_ = 0; }
+  void Reset() {
+    // Cached descriptors belong to the command buffer's descriptor pool.
+    // Invalidate the one-entry hot lookup on every pool/context transition.
+    entries_.clear(); hot_.valid = false; command_buffer_ = pool_ = 0;
+  }
   Descriptor Find(const Key& key) {
     if (Valid(key)) {
+      // Resolve/blit workloads often reuse the previous exact descriptor.
+      // Bypass a 4-field unordered_map hash and bucket walk in that case.
+      if (hot_.valid && hot_.key == key) {
+        ++statistics_.hits;
+        return hot_.descriptor;
+      }
       const auto found = entries_.find(key);
-      if (found != entries_.end()) { ++statistics_.hits; return found->second; }
+      if (found != entries_.end()) {
+        hot_ = {key, found->second, true};
+        ++statistics_.hits;
+        return found->second;
+      }
     }
     ++statistics_.misses; return {};
   }
@@ -34,7 +48,11 @@ class NativeResolveDescriptorCache {
     // Duplicate inserts must leave the existing valid handle untouched,
     // especially at capacity. The old path cleared all 256 entries before
     // checking for duplicates, causing a burst of redundant allocations.
-    if (entries_.find(key) != entries_.end()) return;
+    const auto existing = entries_.find(key);
+    if (existing != entries_.end()) {
+      hot_ = {key, existing->second, true};
+      return;
+    }
     // Pre-size the per-command-pool map once; Reset()/clear() keeps the
     // buckets for the next recording scope without keeping old handles.
     if (entries_.empty()) entries_.reserve(kCapacity);
@@ -42,7 +60,10 @@ class NativeResolveDescriptorCache {
     // The unordered_map entry is deliberately an arbitrary victim: descriptor
     // validity is still controlled by the exact key and BeginScope/Reset.
     if (entries_.size() >= kCapacity) entries_.erase(entries_.begin());
-    if (entries_.emplace(key, descriptor).second) ++statistics_.inserts;
+    if (entries_.emplace(key, descriptor).second) {
+      ++statistics_.inserts;
+      hot_ = {key, descriptor, true};
+    }
   }
   const Statistics& statistics() const { return statistics_; }
   size_t size() const { return entries_.size(); }
@@ -60,6 +81,13 @@ class NativeResolveDescriptorCache {
       mix(key.surface_lifetime); mix(key.layout); mix(key.image_layout); return h;
     }
   };
+  struct HotEntry {
+    Key key{};
+    Descriptor descriptor{};
+    bool valid = false;
+  };
+  // Recorder-local and non-owning; never allowed to outlive the pool scope.
+  HotEntry hot_{};
   std::unordered_map<Key, Descriptor, Hash> entries_;
   uint64_t command_buffer_ = 0, pool_ = 0;
   Statistics statistics_;
