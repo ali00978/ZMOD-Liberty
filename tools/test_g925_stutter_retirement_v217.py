@@ -15,7 +15,14 @@ assert "void ReleasePendingSurfaceImages(bool force_drain = false);" in header
 assert "void Gta4NativeGraphicsSystem::ReleasePendingSurfaceImages(bool force_drain)" in source
 assert "ShouldKeepNativeSurfacePending((*image)->last_used_submission" in source
 assert "retired_surface_count, force_drain)" in source
-assert "still_pending_ids.insert((*image)->lifetime_id);" in source
+assert "pending_surface_release_ids_.erase(release_id);" in source
+assert "std::unordered_set<uint64_t> still_pending_ids;" not in source
+assert "if (retired_surface_count >= NativeSurfaceRetirementLimit(force_drain)) break;" in source
+# No other path erases individual native surface images. Final shutdown
+# deliberately clears both containers, so the in-place pending set is sound.
+assert source.count("native_surface_images_.erase(") == 1
+assert source.count("native_surface_images_.clear();") == 1
+assert source.count("pending_surface_release_ids_.clear();") == 1
 assert source.count("ReleasePendingSurfaceImages(true);") == 2
 assert "ReleasePendingSurfaceImages();\n" in source
 assert "GetNativeBufferReclamationWorkLimit(cache_bytes, cache_limit)" in source
