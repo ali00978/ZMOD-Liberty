@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 namespace rex::graphics::gta4_native {
 
@@ -113,21 +114,37 @@ struct NativeVertexStreamSelection {
 
 // Copies of an immutable pipeline snapshot may carry this memo. Both resource
 // identities and their input signatures must match before the copy can hit.
+// Two exact entries allow an immutable pipeline snapshot to reuse alternating
+// stream declarations without repeating expensive vertex-layout discovery.
+// No shader or declaration pointer is dereferenced by the cache itself.
 class NativeVertexStreamMemo {
  public:
   const NativeVertexStreamSelection* Find(const NativeVertexStreamKey& key) const {
-    return populated_ && key_ == key ? &selection_ : nullptr;
+    if (recent_.valid && recent_.key == key) return &recent_.selection;
+    if (previous_.valid && previous_.key == key) return &previous_.selection;
+    return nullptr;
   }
   void Store(const NativeVertexStreamKey& key, NativeVertexStreamSelection selection) {
-    key_ = key;
-    selection_ = selection;
-    populated_ = true;
+    if (recent_.valid && recent_.key == key) {
+      recent_.selection = selection;
+    } else if (previous_.valid && previous_.key == key) {
+      // Promote a previously cached identity without dropping either result.
+      std::swap(recent_, previous_);
+      recent_.selection = selection;
+    } else {
+      previous_ = recent_;
+      recent_ = {key, selection, true};
+    }
   }
 
  private:
-  NativeVertexStreamKey key_{};
-  NativeVertexStreamSelection selection_{};
-  bool populated_ = false;
+  struct Entry {
+    NativeVertexStreamKey key{};
+    NativeVertexStreamSelection selection{};
+    bool valid = false;
+  };
+  Entry recent_{};
+  Entry previous_{};
 };
 
 }  // namespace rex::graphics::gta4_native
