@@ -29,6 +29,29 @@ inline constexpr uint32_t kNativeBufferCacheLimitMiB = 256;
 inline constexpr size_t kNativeMaximumVertexConversionsPerBuffer = 2;
 inline constexpr uint32_t kNativeUploadShrinkObservationFrames = 120;
 
+// Keep bulk Vulkan surface destruction off the critical presentation frame.
+// Pending lifetimes remain invisible to new draws; final destruction is still
+// gated by completed GPU submissions. Idle/no-frame releases may drain fully
+// so a paused title does not retain a backlog forever.
+inline constexpr size_t kNativeSurfaceRetirementsPerFrame = 12;
+constexpr size_t NativeSurfaceRetirementLimit(bool force_drain) {
+  return force_drain ? size_t(-1) : kNativeSurfaceRetirementsPerFrame;
+}
+
+// Aged, under-budget host buffers can be reclaimed over several frames,
+// avoiding a sudden 64-resource/16 MiB CPU destructor burst. Under memory
+// pressure retain the previous more aggressive bounds to prevent OOM.
+struct NativeBufferReclamationWorkLimit {
+  size_t max_resources = 0;
+  uint64_t max_bytes = 0;
+};
+constexpr NativeBufferReclamationWorkLimit GetNativeBufferReclamationWorkLimit(
+    uint64_t retained_bytes, uint64_t budget_bytes) {
+  return retained_bytes > budget_bytes
+      ? NativeBufferReclamationWorkLimit{64, 16ull * 1024 * 1024}
+      : NativeBufferReclamationWorkLimit{16, 4ull * 1024 * 1024};
+}
+
 // Internal lock flushes submit GPU work but are not title presents. Keep the
 // resource-maintenance clock on the most recent title frame. A real present
 // with frame zero (startup, reset, or wrap) remains a real clock observation.
