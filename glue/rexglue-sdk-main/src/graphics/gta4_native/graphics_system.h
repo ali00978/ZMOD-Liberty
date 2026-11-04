@@ -1800,7 +1800,7 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
   void DestroyNativeTextureImage(NativeTextureImage& image);
   void DestroyNativeTextureViews(NativeTextureImage& image);
   void DestroyNativeSurfaceImage(NativeSurfaceImage& image);
-  void ReleasePendingSurfaceImages();
+  void ReleasePendingSurfaceImages(bool force_drain = false);
   void QueueSurfaceImageRelease(uint32_t handle);
   NativeTextureImage* GetOrCreateTextureImage(
       VkCommandBuffer command_buffer, const std::shared_ptr<const NativeTextureResource>& texture,
