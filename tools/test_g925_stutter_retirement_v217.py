@@ -26,6 +26,9 @@ assert source.count("pending_surface_release_ids_.clear();") == 1
 assert source.count("ReleasePendingSurfaceImages(true);") == 2
 assert "ReleasePendingSurfaceImages();\n" in source
 assert "GetNativeBufferReclamationWorkLimit(cache_bytes, cache_limit)" in source
+assert "static thread_local std::vector<Candidate> candidates;" in source
+assert "candidates.clear();" in source
+assert "candidates.reserve(buffer_resources_.size());" in source
 assert "NativeWorkBudget buffer_reclamation(reclamation_limit.max_resources," in source
 assert "kNativeSurfaceRetirementsPerFrame = 12" in schedule
 
