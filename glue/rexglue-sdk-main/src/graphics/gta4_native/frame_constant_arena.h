@@ -72,17 +72,41 @@ class FrameGenerationMap {
   }
 
   InsertResult Insert(const Key& key, const Value& value) {
-    if (Value* existing = Find(key)) {
-      return {existing, false};
-    }
-    if (!EnsureInsertionCapacity()) {
+    // The recording hot path used to probe the same hash chain twice:
+    // Find(key) on every Insert, followed by InsertWithoutGrowth(key).
+    // Probe once for both duplicates and a free generation-stamped slot.
+    // A full table still grows before insertion, retaining the same <= 50%
+    // load factor and exact-key collision semantics.
+    if (buckets_.empty() && !EnsureInsertionCapacity()) {
       return {};
     }
-    Bucket* bucket = InsertWithoutGrowth(key, value);
-    if (!bucket) {
-      return {};
+    const size_t hash = hasher_(key);
+    const uint64_t wanted = (generation_ << kTagBits) | Tag(hash);
+    const size_t mask = buckets_.size() - 1;
+    size_t index = hash & mask;
+    for (size_t probe = 0; probe < buckets_.size(); ++probe) {
+      const uint64_t stamp = stamps_[index];
+      if ((stamp >> kTagBits) != generation_) {
+        if (size_ >= buckets_.size() / 2) {
+          if (!EnsureInsertionCapacity()) return {};
+          // A growth changes bucket positions, so use the existing guarded
+          // insertion routine only on this uncommon resizing path.
+          Bucket* grown = InsertWithoutGrowth(key, value);
+          return grown ? InsertResult{&grown->value, true} : InsertResult{};
+        }
+        Bucket& bucket = buckets_[index];
+        bucket.key = key;
+        bucket.value = value;
+        stamps_[index] = wanted;
+        ++size_;
+        return {&bucket.value, true};
+      }
+      if (stamp == wanted && equal_(buckets_[index].key, key)) {
+        return {&buckets_[index].value, false};
+      }
+      index = (index + 1) & mask;
     }
-    return {&bucket->value, true};
+    return {};
   }
 
   bool CanResetGeneration() const { return generation_ < kMaximumGeneration; }
