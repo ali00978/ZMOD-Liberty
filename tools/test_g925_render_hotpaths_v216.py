@@ -34,4 +34,12 @@ with tempfile.TemporaryDirectory(prefix="g925-hotpath-") as tmp:
         args[2:2] = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
     subprocess.run(args, check=True)
     subprocess.run([str(exe)], check=True, timeout=20)
-print("PASS: production pipeline/surface/descriptor fast paths and native replay")
+    # Validate the frame-spike budget using the production scheduling header.
+    cleanup_test = ROOT / "tools/test_g925_fps_drop_budget_v216.cpp"
+    cleanup_exe = Path(tmp) / ("cleanup.exe" if os.name == "nt" else "cleanup")
+    cleanup_args = args.copy()
+    cleanup_args[cleanup_args.index(str(ROOT / "tools/test_g925_render_hotpaths_v216.cpp"))] = str(cleanup_test)
+    cleanup_args[-1] = str(cleanup_exe)
+    subprocess.run(cleanup_args, check=True)
+    subprocess.run([str(cleanup_exe)], check=True, timeout=20)
+print("PASS: production render fast paths and bounded frame-spike cleanup")
