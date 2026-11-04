@@ -29,32 +29,72 @@ template <typename Image, size_t Capacity = 64>
 class NativeSurfaceLookupCache {
  public:
   Image* Find(const NativeSurfaceLookupKey& key, uint64_t registry_revision) const {
-    const auto& entry = entries_[Index(key)];
-    return entry.image && entry.registry_revision == registry_revision && entry.key == key
-               ? entry.image : nullptr;
+    const size_t start = SetIndex(key) * kWays;
+    for (size_t way = 0; way < kWays; ++way) {
+      const auto& entry = entries_[start + way];
+      if (entry.epoch == epoch_ && entry.image &&
+          entry.registry_revision == registry_revision && entry.key == key) {
+        return entry.image;
+      }
+    }
+    return nullptr;
   }
 
   void Store(const NativeSurfaceLookupKey& key, uint64_t registry_revision, Image* image) {
-    if (image) entries_[Index(key)] = {key, registry_revision, image};
+    if (!image) return;
+    const size_t set = SetIndex(key);
+    const size_t start = set * kWays;
+    // Prefer refreshing a matching key, then a vacant/expired way. Keeping
+    // two exact keys for the same surface handle avoids direct-mapped thrash
+    // when reflection, format and sample variants alternate on adjacent draws.
+    for (size_t way = 0; way < kWays; ++way) {
+      auto& entry = entries_[start + way];
+      if (entry.epoch == epoch_ && entry.image && entry.key == key) {
+        entry = {key, registry_revision, image, epoch_};
+        return;
+      }
+    }
+    for (size_t way = 0; way < kWays; ++way) {
+      auto& entry = entries_[start + way];
+      if (entry.epoch != epoch_ || !entry.image ||
+          entry.registry_revision != registry_revision) {
+        entry = {key, registry_revision, image, epoch_};
+        return;
+      }
+    }
+    const size_t victim = size_t(next_victim_[set]++ % kWays);
+    entries_[start + victim] = {key, registry_revision, image, epoch_};
   }
 
   void Invalidate() {
-    for (auto& entry : entries_) entry.image = nullptr;
+    // The registry owns image lifetimes. Invalidating by generation avoids
+    // touching every cache line whenever a surface is released/replaced.
+    // Stale pointers are never dereferenced; wrap-around cannot revive them.
+    if (++epoch_ == 0) {
+      for (auto& entry : entries_) entry = {};
+      next_victim_.fill(0);
+      epoch_ = 1;
+    }
   }
 
  private:
   static_assert(Capacity && !(Capacity & (Capacity - 1)));
-  static size_t Index(const NativeSurfaceLookupKey& key) {
+  static constexpr size_t kWays = Capacity >= 2 ? 2 : 1;
+  static constexpr size_t kSetCount = Capacity / kWays;
+  static size_t SetIndex(const NativeSurfaceLookupKey& key) {
     uint32_t h = key.descriptor[0] * 0x9E3779B9u;
     h ^= h >> 16;
-    return (h ^ (key.samples * 17u) ^ uint32_t(key.depth)) & (Capacity - 1);
+    return (h ^ (key.samples * 17u) ^ uint32_t(key.depth)) & (kSetCount - 1);
   }
   struct Entry {
     NativeSurfaceLookupKey key{};
     uint64_t registry_revision = 0;
     Image* image = nullptr;
+    uint64_t epoch = 0;
   };
   std::array<Entry, Capacity> entries_{};
+  std::array<uint8_t, kSetCount> next_victim_{};
+  uint64_t epoch_ = 1;
 };
 
 struct NativeVertexStreamKey {
