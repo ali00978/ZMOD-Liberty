@@ -6901,7 +6901,9 @@ void Gta4NativeGraphicsSystem::RenderWorkerMain() {
           pending_texture_release_generations_.insert(command.released_texture_generation);
         }
         if (current_frame_.empty() && !command_buffer_submission_) {
-          ReleasePendingSurfaceImages();
+          // No presentation callbacks may follow while idle: fully drain safe
+          // completed releases instead of leaving deferred resources resident.
+          ReleasePendingSurfaceImages(true);
         }
         if (retired_aliases &&
             CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeProbes)) {
@@ -7614,7 +7616,7 @@ void Gta4NativeGraphicsSystem::ApplyReleaseResourceEffects(const NativeReleaseEf
     pending_texture_release_generations_.insert(effect.released_texture_generation);
   }
   if (effect.frame_was_empty && !command_buffer_submission_) {
-    ReleasePendingSurfaceImages();
+    ReleasePendingSurfaceImages(true);
   }
   if (retired_aliases && CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeProbes)) {
     REXLOG_INFO(
@@ -20867,7 +20869,9 @@ void Gta4NativeGraphicsSystem::ReleaseUnusedBufferResources(uint32_t submitted_f
 
   uint64_t reclaimed_bytes = 0;
   size_t reclaimed_resources = 0;
-  NativeWorkBudget buffer_reclamation(64, 16777216);
+  const auto reclamation_limit = GetNativeBufferReclamationWorkLimit(cache_bytes, cache_limit);
+  NativeWorkBudget buffer_reclamation(reclamation_limit.max_resources,
+                                      reclamation_limit.max_bytes);
   std::lock_guard lock(buffer_resource_mutex_);
   for (const Candidate& candidate : candidates) {
     const auto entry = buffer_resources_.find(candidate.handle);
@@ -21025,7 +21029,7 @@ void Gta4NativeGraphicsSystem::QueueSurfaceImageRelease(uint32_t handle) {
   }
 }
 
-void Gta4NativeGraphicsSystem::ReleasePendingSurfaceImages() {
+void Gta4NativeGraphicsSystem::ReleasePendingSurfaceImages(bool force_drain) {
   const profile::CpuPhaseScope profile_phase(profile::CpuPhase::kHousekeeping);
   const profile::CpuScope profile_scope(profile::CpuOp::kSurfaceRelease);
 
@@ -21033,13 +21037,17 @@ void Gta4NativeGraphicsSystem::ReleasePendingSurfaceImages() {
     return;
   }
   size_t retired_surface_count = 0;
+  const size_t retire_limit = NativeSurfaceRetirementLimit(force_drain);
   std::unordered_set<uint64_t> still_pending_ids;
   for (auto image = native_surface_images_.begin(); image != native_surface_images_.end();) {
     if (!*image || !pending_surface_release_ids_.contains((*image)->lifetime_id)) {
       ++image;
       continue;
     }
-    if ((*image)->last_used_submission > completed_command_buffer_submission_) {
+    // Keep GPU-in-flight and over-budget lifetimes pending and invisible to
+    // fresh draws. Cleanup can continue in the next presentation frame.
+    if ((*image)->last_used_submission > completed_command_buffer_submission_ ||
+        retired_surface_count >= retire_limit) {
       still_pending_ids.insert((*image)->lifetime_id);
       ++image;
       continue;
