@@ -32,7 +32,17 @@ spikes without making unsupported FPS promises.
    is used to reduce memory pressure. No extra allocated memory and
    no disabling of texture pressure monitoring.
 
-Neither path removes GPU-fence completion, descriptor lifetime checks or
+3. **No repeated cleanup-container allocation:** the surface retirement
+   loop now erases only successfully retired IDs from its existing pending
+   hash set and stops scanning as soon as its per-frame retirement limit is
+   reached. Previously it allocated and reconstructed an entire hash set of
+   still-pending IDs on *every* frame of an extended cleanup backlog.
+   The only individual surface-image erase path is this function; final
+   shutdown clears both containers. The host buffer reclamation loop also
+   reuses the candidate vector capacity on the same render worker instead of
+   reallocating on every continuation frame.
+
+These paths do not remove GPU-fence completion, descriptor lifetime checks or
 resource owner accounting. Vulkan shaders, rendering resolution, graphics
 assets, UI, adaptive visual settings, Fast 16 ms CPU feedback, Stable ADPF
 selection, frame cap and bounded presenter overlap are unchanged.
