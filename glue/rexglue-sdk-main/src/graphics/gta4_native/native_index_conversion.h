@@ -71,30 +71,38 @@ inline bool WriteNativeConvertedIndices(std::span<const uint8_t> source,
     return true;
   }
 
-  const auto read = [&](uint32_t i) {
-    uint32_t value = 0;
-    const uint8_t* p = source.data() + (size_t(key.first) + i) * element;
-    if (key.index32) std::memcpy(&value, p, sizeof(value));
-    else { uint16_t small; std::memcpy(&small, p, sizeof(small)); value = small; }
-    return value;
-  };
-  size_t cursor = 0;
-  const auto emit = [&](uint32_t value) {
-    if (key.index32) std::memcpy(destination.data() + cursor, &value, sizeof(value));
-    else { const uint16_t small = uint16_t(value); std::memcpy(destination.data() + cursor, &small, sizeof(small)); }
-    cursor += element;
-  };
   if (key.conversion == NativeIndexConversion::kQuads) {
+    // ABCD -> ABC ACD. Preserve the original host-endian bytes directly:
+    // three bounded memcpy calls per quad instead of four decoded reads and
+    // six encoded writes. No alignment assumptions for either index width.
+    const uint8_t* src = source.data() + size_t(key.first) * element;
+    uint8_t* dst = destination.data();
     for (uint32_t quad = 0; quad < key.count / 4; ++quad) {
-      const uint32_t first = quad * 4;
-      const uint32_t a = read(first), b = read(first + 1), c = read(first + 2), d = read(first + 3);
-      emit(a); emit(b); emit(c); emit(a); emit(c); emit(d);
+      std::memcpy(dst, src, 3 * element);
+      std::memcpy(dst + 3 * element, src, element);
+      std::memcpy(dst + 4 * element, src + 2 * element, 2 * element);
+      src += 4 * element;
+      dst += 6 * element;
     }
   } else {
+    // A masked primitive-restart marker must become the native all-ones
+    // sentinel; all other values retain their original bit patterns.
+    const uint8_t* src = source.data() + size_t(key.first) * element;
+    uint8_t* dst = destination.data();
     for (uint32_t i = 0; i < key.count; ++i) {
-      const uint32_t value = read(i);
-      const bool restart = (key.index32 ? value & key.index_mask : value) == key.restart_index;
-      emit(restart ? (key.index32 ? UINT32_MAX : UINT16_MAX) : value);
+      uint32_t value = 0;
+      if (key.index32) std::memcpy(&value, src, sizeof(value));
+      else { uint16_t small; std::memcpy(&small, src, sizeof(small)); value = small; }
+      if ((key.index32 ? (value & key.index_mask) : value) == key.restart_index) {
+        if (key.index32) { const uint32_t restart = UINT32_MAX;
+          std::memcpy(dst, &restart, sizeof(restart)); }
+        else { const uint16_t restart = UINT16_MAX;
+          std::memcpy(dst, &restart, sizeof(restart)); }
+      } else {
+        std::memcpy(dst, src, element);
+      }
+      src += element;
+      dst += element;
     }
   }
   return true;
