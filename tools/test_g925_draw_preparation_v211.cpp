@@ -77,6 +77,23 @@ static void raster_replay() {
     else k.suppress_coverage = true;
     check(!memo.Find(k));
   }
+  // The prior one-entry memo recomputed the full viewport/scissor calculation
+  // on every A/B alternation. Two exact entries must preserve both results.
+  auto second = base;
+  second.scissor[0] += 16;
+  const auto second_value = legacy(second);
+  memo.Store(second, second_value);
+  for (unsigned i = 0; i < 10000; ++i) {
+    check(memo.Find(base) && memo.Find(second));
+    same(*memo.Find(base), legacy(base));
+    same(*memo.Find(second), second_value);
+  }
+  auto third = base;
+  third.scissor[1] += 8;
+  memo.Store(third, legacy(third));
+  check(!memo.Find(base) && memo.Find(second) && memo.Find(third));
+  memo.Reset();
+  check(!memo.Find(base) && !memo.Find(second) && !memo.Find(third));
   unsigned computations = 0;
   for (unsigned draw = 0; draw < 20000; ++draw) {
     auto k = base;
