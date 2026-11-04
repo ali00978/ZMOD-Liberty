@@ -153,6 +153,7 @@ jobs:
           python tools/test_g925_render_state_v27.py
           python tools/test_g925_draw_lookup_v28.py
           python tools/test_g925_cache_batch_v214.py
+          python tools/test_g925_memo_resolve_v215.py
           python tools/test_g925_index_upload_v29.py
           python tools/test_g925_present_overlap_v212.py
           python tools/test_g925_profile_report_v27.py
