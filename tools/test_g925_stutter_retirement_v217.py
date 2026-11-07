@@ -30,7 +30,8 @@ assert "static thread_local std::vector<Candidate> candidates;" in source
 assert "candidates.clear();" in source
 assert "candidates.reserve(buffer_resources_.size());" in source
 assert "NativeWorkBudget buffer_reclamation(reclamation_limit.max_resources," in source
-assert "kNativeSurfaceRetirementsPerFrame = 12" in schedule
+assert "kNativeSurfaceRetirementsPerFrame = 6" in schedule
+assert "NativeBufferReclamationWorkLimit{8, 2ull * 1024 * 1024}" in schedule
 
 compiler = os.environ.get("G925_TEST_CXX") or shutil.which("g++") or shutil.which("clang++")
 if not compiler:
