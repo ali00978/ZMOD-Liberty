@@ -2832,6 +2832,9 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
   uint64_t texture_allocation_failure_count_ = 0;
   NativeSurfaceLookupCache<NativeSurfaceImage> surface_lookup_cache_;
   std::vector<std::unique_ptr<NativeSurfaceImage>> native_surface_images_;
+  // Recorder-local scan position; keeps old surfaces from being examined
+  // from vector index zero on every frame with deferred releases.
+  size_t surface_retirement_scan_cursor_ = 0;
   std::unordered_map<uint32_t, std::vector<NativeSurfaceImage*>> surface_images_by_handle_;
   struct NativeTextureReadback {
     VkBuffer buffer = VK_NULL_HANDLE;
