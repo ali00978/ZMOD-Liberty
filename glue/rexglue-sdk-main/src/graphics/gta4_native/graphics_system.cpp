@@ -21013,14 +21013,19 @@ void Gta4NativeGraphicsSystem::DestroyNativeSurfaceImage(NativeSurfaceImage& ima
 
 void Gta4NativeGraphicsSystem::QueueSurfaceImageRelease(uint32_t handle) {
   surface_lookup_cache_.Invalidate();
-  for (const auto& image : native_surface_images_) {
-    if (image && image->descriptor.handle == handle) {
+  // The creation/destruction paths already maintain this authoritative
+  // handle -> live-image index. Avoid scanning every scene surface when a
+  // single guest surface handle is released (the common transient case).
+  if (const auto found = surface_images_by_handle_.find(handle);
+      found != surface_images_by_handle_.end()) {
+    for (const NativeSurfaceImage* image : found->second) {
+      if (!image || image->descriptor.handle != handle) continue;
       pending_surface_release_ids_.insert(image->lifetime_id);
       if (NativeRendererEventTraceEnabled()) {
-      TraceNativeRendererEvent(
-          "surface-release-queued",
-          fmt::format("handle={:08X} lifetime={} last-submission={}", handle,
-                      image->lifetime_id, image->last_used_submission));
+        TraceNativeRendererEvent(
+            "surface-release-queued",
+            fmt::format("handle={:08X} lifetime={} last-submission={}", handle,
+                        image->lifetime_id, image->last_used_submission));
       }
     }
   }
