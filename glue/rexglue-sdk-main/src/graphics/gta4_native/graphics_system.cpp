@@ -3,6 +3,7 @@
 #include "core/font_atlas.h"
 #include "native_profile_labels.h"
 #include "graphics_system.h"
+#include "native_surface_retirement_scan.h"
 #if defined(__ANDROID__)
 #include <android/log.h>
 #include <pthread.h>
@@ -21037,25 +21038,32 @@ void Gta4NativeGraphicsSystem::ReleasePendingSurfaceImages(bool force_drain) {
   const profile::CpuPhaseScope profile_phase(profile::CpuPhase::kHousekeeping);
   const profile::CpuScope profile_scope(profile::CpuOp::kSurfaceRelease);
 
-  if (pending_surface_release_ids_.empty()) {
+  if (pending_surface_release_ids_.empty()) return;
+  if (native_surface_images_.empty()) {
+    surface_retirement_scan_cursor_ = 0;
     return;
   }
+
   size_t retired_surface_count = 0;
-  // Keep the authoritative pending set in place. Rebuilding a second hash
-  // table every frame would allocate and hash one node per deferred surface,
-  // creating precisely the stutter that staged destruction should avoid.
-  for (auto image = native_surface_images_.begin(); image != native_surface_images_.end();) {
-    if (retired_surface_count >= NativeSurfaceRetirementLimit(force_drain)) break;
+  // Limit not only completed Vulkan destroys but also CPU searches across
+  // live surfaces. A deferred release at the end of a large scene used to
+  // require a full vector walk on every frame, even when only six resources
+  // could be retired. Resume from the last scan position to prevent starvation.
+  NativeSurfaceRetirementScan scan(native_surface_images_.size(),
+                                    surface_retirement_scan_cursor_, force_drain);
+  while (scan.HasNext(native_surface_images_.size()) &&
+         retired_surface_count < NativeSurfaceRetirementLimit(force_drain)) {
+    auto image = native_surface_images_.begin() + scan.index();
     if (!*image || !pending_surface_release_ids_.contains((*image)->lifetime_id)) {
-      ++image;
+      scan.Next(native_surface_images_.size(), false);
       continue;
     }
-    // No new draw may reuse a pending lifetime. The original GPU completion
-    // condition remains authoritative; budget-limited releases stay queued.
+    // Keep GPU-flight lifetime checks unchanged. Pending identities remain
+    // invisible to draws, including when the search budget is exhausted.
     if (ShouldKeepNativeSurfacePending((*image)->last_used_submission,
                                        completed_command_buffer_submission_,
                                        retired_surface_count, force_drain)) {
-      ++image;
+      scan.Next(native_surface_images_.size(), false);
       continue;
     }
     const uint64_t release_id = (*image)->lifetime_id;
@@ -21068,13 +21076,15 @@ void Gta4NativeGraphicsSystem::ReleasePendingSurfaceImages(bool force_drain) {
       }
     }
     DestroyNativeSurfaceImage(*retired_image);
-    image = native_surface_images_.erase(image);
-    // This is the only per-frame lifetime removal path; shutdown clears
-    // both containers. Erase just the completed ID instead of reallocating
-    // the entire still-pending set every presentation frame.
+    native_surface_images_.erase(image);
     pending_surface_release_ids_.erase(release_id);
+    // Vector erase shifts the next image into the erased index. Forced idle
+    // drains retain their whole-vector scan; only live title frames are capped.
+    scan.Next(native_surface_images_.size(), true);
     ++retired_surface_count;
   }
+  surface_retirement_scan_cursor_ = scan.index();
+
   if (retired_surface_count &&
       CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeProbes)) {
     REXLOG_INFO("gta4-native-surface-lifecycle: retired={} remaining={} placement-owners={}",
