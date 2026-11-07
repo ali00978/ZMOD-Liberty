@@ -24,6 +24,16 @@ assert "ShouldKeepNativeSurfacePending((*image)->last_used_submission" in source
 assert "completed_command_buffer_submission_" in source
 assert "pending_surface_release_ids_.erase(release_id);" in source
 assert source.count("native_surface_images_.erase(") == 1
+# All live images are registered/unregistered in the existing handle index.
+# Queue releases now scan only variants of the requested handle, not every
+# surface in the scene. Keep creation and destruction index maintenance.
+assert "surface_images_by_handle_.find(handle)" in source
+assert "for (const NativeSurfaceImage* image : found->second)" in source
+assert "surface_images_by_handle_[descriptor.handle].push_back(image.get());" in source
+assert "std::erase(it->second, &image);" in source
+queue_start = source.index("void Gta4NativeGraphicsSystem::QueueSurfaceImageRelease(uint32_t handle)")
+queue_end = source.index("void Gta4NativeGraphicsSystem::ReleasePendingSurfaceImages", queue_start)
+assert "native_surface_images_" not in source[queue_start:queue_end]
 assert "kNativeSurfaceRetirementScanItemsPerFrame = 512" in policy
 assert "kNativeSurfaceRetirementsPerFrame = 6" in schedule
 assert "NativeSurfaceRetirementLimit(force_drain)" in source
