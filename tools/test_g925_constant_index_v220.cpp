@@ -106,7 +106,7 @@ static void TestArenaFencesAndFullReuse() {
   auto same = arena.FindOrReserve(a, 64, 32);
   assert(same && same->reused && same->offset == 0);
   assert(!arena.FindOrReserve(a, 65, 32)); // reject wrong size without mutation
-  assert(!arena.FindOrReserve(a, 64, 128)); // reject misaligned old reservation
+  assert(!arena.FindOrReserve(b, 96, 128)); // reject misaligned old reservation
   assert(!arena.FindOrReserve(c, 4, 4)); // no capacity
   assert(arena.bytes_used() == 160 && arena.reservation_count() == 2);
   assert(arena.MarkSubmitted(91));
