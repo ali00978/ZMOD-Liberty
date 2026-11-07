@@ -17,7 +17,9 @@ assert "ShouldKeepNativeSurfacePending((*image)->last_used_submission" in source
 assert "retired_surface_count, force_drain)" in source
 assert "pending_surface_release_ids_.erase(release_id);" in source
 assert "std::unordered_set<uint64_t> still_pending_ids;" not in source
-assert "if (retired_surface_count >= NativeSurfaceRetirementLimit(force_drain)) break;" in source
+assert "retired_surface_count < NativeSurfaceRetirementLimit(force_drain)" in source
+assert "NativeSurfaceRetirementScan scan(native_surface_images_.size()," in source
+assert "surface_retirement_scan_cursor_ = scan.index();" in source
 # No other path erases individual native surface images. Final shutdown
 # deliberately clears both containers, so the in-place pending set is sound.
 assert source.count("native_surface_images_.erase(") == 1
