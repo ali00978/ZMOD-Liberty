@@ -24,6 +24,14 @@ struct CollidingHash {
 };
 
 static void TestOnePassReservationFactory() {
+  // An invalid first reservation must not create an unused hash table.
+  FrameGenerationMap<uint32_t, uint32_t, CountingHash> empty_cache;
+  CountingHash::calls = 0;
+  auto no_capacity = empty_cache.FindOrInsertWith(7, []() -> std::optional<uint32_t> {
+    return std::nullopt;
+  });
+  assert(!no_capacity && empty_cache.size() == 0);
+  assert(empty_cache.bucket_count() == 0 && CountingHash::calls == 0);
   FrameGenerationMap<uint32_t, uint32_t, CountingHash> cache;
   CountingHash::calls = 0;
   size_t factory_calls = 0;
