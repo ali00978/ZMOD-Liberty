@@ -1,5 +1,6 @@
 #include "android/android_performance_hint.h"
 #include "android/g925_hint_thread_policy.h"
+#include "android/g925_hint_target_policy.h"
 
 #include <algorithm>
 #include <array>
@@ -29,10 +30,10 @@
 REXCVAR_DEFINE_BOOL(android_performance_hint, true, "GTA IV/Performance",
                     "Report frame times to Android's Performance Hint API so the system "
                     "raises the CPU clocks of the game's busiest threads when frames run late");
-REXCVAR_DEFINE_UINT32(android_performance_hint_target_ms, 25, "GTA IV/Performance",
-                      "Frame time the performance hint asks Android for. Below the 33 ms of "
-                      "30 FPS so the clocks stay up between busy moments instead of dropping "
-                      "and recovering (steadier, a little warmer); 33 = the old behaviour")
+REXCVAR_DEFINE_UINT32(android_performance_hint_target_ms, 16, "GTA IV/Performance",
+                      "CPU work target requested from Android ADPF. 16ms is the aggressive "
+                      "60 FPS-oriented mode; Android decides actual clocks and may thermally "
+                      "throttle. Old Maximum=20ms settings migrate to 16ms; 25/30/33 stay unchanged")
     .range(10, 50);
 
 // Legacy Mali fork delivered these updates in 100ms bursts. The optional
@@ -51,7 +52,8 @@ namespace {
 constexpr int64_t kMaxFrameNs = 4 * 33'333'333;  // clamp for pauses and loading stalls
 
 int64_t TargetFrameNs() {
-  return int64_t(std::clamp<uint32_t>(REXCVAR_GET(android_performance_hint_target_ms), 10, 50)) * 1'000'000;
+  const auto requested = std::clamp<uint32_t>(REXCVAR_GET(android_performance_hint_target_ms), 10, 50);
+  return int64_t(G925EffectiveHintTargetMs(requested)) * 1'000'000;
 }
 constexpr size_t kMaxHintThreads = 6;
 // CPU ticks (100 per second) a thread needs in one second to count as busy.
