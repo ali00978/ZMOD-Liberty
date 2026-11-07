@@ -158,6 +158,7 @@ jobs:
           python tools/test_g925_stutter_retirement_v217.py
           python tools/test_g925_hint_target_v218.py
           python tools/test_g925_surface_retirement_v219.py
+          python tools/test_g925_constant_index_v220.py
           python tools/test_g925_index_upload_v29.py
           python tools/test_g925_present_overlap_v212.py
           python tools/test_g925_profile_report_v27.py
