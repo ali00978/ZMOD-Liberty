@@ -109,6 +109,42 @@ class FrameGenerationMap {
     return {};
   }
 
+  // Lookup and lazily construct a value using one hash/probe sequence on
+  // normal frame-recording paths. Unlike Find() followed by Insert(), a new
+  // reservation no longer walks the table twice. The factory is NEVER called
+  // for an exact duplicate and may decline insertion without changing size.
+  // Rehashing happens only after a valid new value exists.
+  template <typename Factory>
+  InsertResult FindOrInsertWith(const Key& key, Factory&& factory) {
+    if (buckets_.empty() && !EnsureInsertionCapacity()) return {};
+    const size_t hash = hasher_(key);
+    const uint64_t wanted = (generation_ << kTagBits) | Tag(hash);
+    const size_t mask = buckets_.size() - 1;
+    size_t index = hash & mask;
+    for (size_t probe = 0; probe < buckets_.size(); ++probe) {
+      const uint64_t stamp = stamps_[index];
+      if ((stamp >> kTagBits) != generation_) {
+        std::optional<Value> candidate = factory();
+        if (!candidate) return {};
+        if (size_ >= buckets_.size() / 2) {
+          if (!EnsureInsertionCapacity()) return {};
+          Bucket* grown = InsertWithoutGrowth(key, *candidate);
+          return grown ? InsertResult{&grown->value, true} : InsertResult{};
+        }
+        Bucket& bucket = buckets_[index];
+        bucket.key = key;
+        bucket.value = *candidate;
+        stamps_[index] = wanted;
+        ++size_;
+        return {&bucket.value, true};
+      }
+      if (stamp == wanted && equal_(buckets_[index].key, key))
+        return {&buckets_[index].value, false};
+      index = (index + 1) & mask;
+    }
+    return {};
+  }
+
   bool CanResetGeneration() const { return generation_ < kMaximumGeneration; }
 
   bool ResetGeneration() {
@@ -268,27 +304,25 @@ class FrameConstantArenaIndex {
         (alignment & (alignment - 1)) != 0) {
       return std::nullopt;
     }
-    if (const Reservation* existing = reservations_.Find(identity)) {
-      if (existing->byte_size != byte_size || (existing->offset & (alignment - 1)) != 0) {
+    // This cache is read at every draw. A missing identity used to invoke
+    // Find() and then Insert(), hashing and probing the same table twice.
+    // Create the aligned allocation only after a genuine key miss, so
+    // duplicates remain reusable even when the arena is otherwise full.
+    const auto insertion = reservations_.FindOrInsertWith(identity, [&]() -> std::optional<Reservation> {
+      const size_t alignment_mask = alignment - 1;
+      if (byte_cursor_ > std::numeric_limits<size_t>::max() - alignment_mask)
         return std::nullopt;
-      }
-      return FrameConstantReservation{existing->offset, existing->byte_size, true};
-    }
-    const size_t alignment_mask = alignment - 1;
-    if (byte_cursor_ > std::numeric_limits<size_t>::max() - alignment_mask) {
+      const size_t offset = (byte_cursor_ + alignment_mask) & ~alignment_mask;
+      if (offset > byte_capacity_ || byte_size > byte_capacity_ - offset)
+        return std::nullopt;
+      return Reservation{offset, byte_size};
+    });
+    if (!insertion) return std::nullopt;
+    const Reservation& stored = *insertion.value;
+    if (stored.byte_size != byte_size || (stored.offset & (alignment - 1)) != 0)
       return std::nullopt;
-    }
-    const size_t aligned_offset = (byte_cursor_ + alignment_mask) & ~alignment_mask;
-    if (aligned_offset > byte_capacity_ || byte_size > byte_capacity_ - aligned_offset) {
-      return std::nullopt;
-    }
-    const Reservation reservation{aligned_offset, byte_size};
-    const auto insertion = reservations_.Insert(identity, reservation);
-    if (!insertion || !insertion.inserted) {
-      return std::nullopt;
-    }
-    byte_cursor_ = aligned_offset + byte_size;
-    return FrameConstantReservation{aligned_offset, byte_size, false};
+    if (insertion.inserted) byte_cursor_ = stored.offset + stored.byte_size;
+    return FrameConstantReservation{stored.offset, stored.byte_size, !insertion.inserted};
   }
 
   bool MarkSubmitted(uint64_t submission) {
