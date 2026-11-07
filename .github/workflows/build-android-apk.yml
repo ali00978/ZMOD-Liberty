@@ -156,6 +156,7 @@ jobs:
           python tools/test_g925_memo_resolve_v215.py
           python tools/test_g925_render_hotpaths_v216.py
           python tools/test_g925_stutter_retirement_v217.py
+          python tools/test_g925_hint_target_v218.py
           python tools/test_g925_index_upload_v29.py
           python tools/test_g925_present_overlap_v212.py
           python tools/test_g925_profile_report_v27.py
