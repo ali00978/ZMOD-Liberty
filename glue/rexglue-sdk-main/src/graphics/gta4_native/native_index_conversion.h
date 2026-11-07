@@ -85,24 +85,29 @@ inline bool WriteNativeConvertedIndices(std::span<const uint8_t> source,
       dst += 6 * element;
     }
   } else {
-    // A masked primitive-restart marker must become the native all-ones
-    // sentinel; all other values retain their original bit patterns.
+    // Copy unchanged host-endian index data in one bulk operation. A masked
+    // restart index is usually rare; patch only matching markers instead of
+    // issuing an individual write and a width branch for every element.
+    // memcpy on each word keeps unaligned input/output legal on all hosts.
     const uint8_t* src = source.data() + size_t(key.first) * element;
     uint8_t* dst = destination.data();
-    for (uint32_t i = 0; i < key.count; ++i) {
-      uint32_t value = 0;
-      if (key.index32) std::memcpy(&value, src, sizeof(value));
-      else { uint16_t small; std::memcpy(&small, src, sizeof(small)); value = small; }
-      if ((key.index32 ? (value & key.index_mask) : value) == key.restart_index) {
-        if (key.index32) { const uint32_t restart = UINT32_MAX;
-          std::memcpy(dst, &restart, sizeof(restart)); }
-        else { const uint16_t restart = UINT16_MAX;
-          std::memcpy(dst, &restart, sizeof(restart)); }
-      } else {
-        std::memcpy(dst, src, element);
+    std::memcpy(dst, src, size_t(key.count) * element);
+    if (key.index32) {
+      constexpr uint32_t kRestart32 = UINT32_MAX;
+      for (uint32_t i = 0; i < key.count; ++i) {
+        uint32_t value;
+        std::memcpy(&value, src + size_t(i) * sizeof(uint32_t), sizeof(value));
+        if ((value & key.index_mask) == key.restart_index)
+          std::memcpy(dst + size_t(i) * sizeof(uint32_t), &kRestart32, sizeof(kRestart32));
       }
-      src += element;
-      dst += element;
+    } else {
+      constexpr uint16_t kRestart16 = UINT16_MAX;
+      for (uint32_t i = 0; i < key.count; ++i) {
+        uint16_t value;
+        std::memcpy(&value, src + size_t(i) * sizeof(uint16_t), sizeof(value));
+        if (value == key.restart_index)
+          std::memcpy(dst + size_t(i) * sizeof(uint16_t), &kRestart16, sizeof(kRestart16));
+      }
     }
   }
   return true;
