@@ -116,7 +116,14 @@ class FrameGenerationMap {
   // Rehashing happens only after a valid new value exists.
   template <typename Factory>
   InsertResult FindOrInsertWith(const Key& key, Factory&& factory) {
-    if (buckets_.empty() && !EnsureInsertionCapacity()) return {};
+    if (buckets_.empty()) {
+      // Do not allocate the initial table for an arena-capacity failure.
+      // No duplicate can exist before the first insertion.
+      std::optional<Value> candidate = factory();
+      if (!candidate || !EnsureInsertionCapacity()) return {};
+      Bucket* first = InsertWithoutGrowth(key, *candidate);
+      return first ? InsertResult{&first->value, true} : InsertResult{};
+    }
     const size_t hash = hasher_(key);
     const uint64_t wanted = (generation_ << kTagBits) | Tag(hash);
     const size_t mask = buckets_.size() - 1;
