@@ -116,6 +116,7 @@ struct RawImage {
 struct GuestOutputProvenance {
   uint32_t frame_rate_limit = 0;
   bool producer_backpressure = false;
+  bool producer_render_ahead = false;
   bool paired_presentation = false;
   uint64_t publication_serial = 0;
   uint64_t tv_session_id = 0;
@@ -399,7 +400,8 @@ class Presenter {
   bool RefreshGuestOutput(uint32_t frontbuffer_width, uint32_t frontbuffer_height,
                           uint32_t display_aspect_ratio_x, uint32_t display_aspect_ratio_y,
                           std::function<bool(GuestOutputRefreshContext& context)> refresher,
-                          GuestOutputProvenance provenance = {});
+                          GuestOutputProvenance provenance = {},
+                          const std::function<void(bool)>& producer_wait_observer = {});
   // The implementation must be callable from any thread, including from
   // multiple at the same time, and it should acquire the latest guest output
   // image via ConsumeGuestOutput.
@@ -1073,6 +1075,7 @@ class Presenter {
   FramePacer frame_pacer_;  // Existing exclusive paint owner.
   FramePacer::Attempt pacing_attempt_{};
   FramePublicationGate frame_publication_gate_;
+  FramePublicationPipeline frame_publication_pipeline_;  // Refresh owner only.
   const std::thread::id ui_thread_id_ = std::this_thread::get_id();
   std::atomic<uint64_t> paint_retry_delay_ns_{1'000'000};
   uint64_t host_rate_trace_count_ = 0;

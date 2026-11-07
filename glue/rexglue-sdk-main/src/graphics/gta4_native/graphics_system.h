@@ -1,6 +1,7 @@
 #pragma once
 
 #include "native_triangle_fan.h"
+#include "native_index_conversion.h"
 #include "native_vertex_cache.h"
 #include "native_persistent_buffer_map.h"
 #include "native_deferred_release.h"
@@ -64,6 +65,7 @@
 #include "native_binding_policy.h"
 #include "native_descriptor_backend.h"
 #include "native_draw_state_cache.h"
+#include "native_draw_preparation.h"
 #include "native_frame_context.h"
 #include "native_frame_scheduling.h"
 #include "native_gpu_attribution.h"
@@ -75,6 +77,7 @@
 #include "native_performance_samples.h"
 #include "native_profile_detail.h"
 #include "native_pipeline_lookup_memo.h"
+#include "native_draw_lookup_cache.h"
 #include "native_reflection_registry.h"
 #include "native_resolve_policy.h"
 #include "native_resolve_reuse.h"
@@ -300,6 +303,7 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
     // Only the render worker updates memoization on an immutable snapshot.
     mutable NativePipelineLookupMemo<NativeFixedFunctionState, kRenderTargetCount, VkPipeline>
         pipeline_lookup_memo;
+    mutable NativeVertexStreamMemo vertex_stream_memo;
     // Recorder-only memos of the shader-name classifications behind GPU range
     // attribution (string searches over both filenames); 0xFFFF: not computed.
     mutable uint16_t translucent_range_memo = 0xFFFF;
@@ -1438,6 +1442,7 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
     // usually share them. Valid until the arena resets (identities restart).
     NativeSharedConstantSemanticKey last_shared_key{};
     uint64_t last_shared_identity = 0;
+    NativeExactMemo<uint64_t, NativeUploadAllocation> shared_allocation_memo;
   };
 
   enum class NativeUploadKind : uint8_t {
@@ -1469,11 +1474,13 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
   struct NativeFrameResources {
     FrameGenerationMap<NativePersistentBufferKey, NativeUploadAllocation, NativePersistentBufferKeyHash> vertex_uploads;
     FrameGenerationMap<uint64_t, NativeUploadAllocation> index16_uploads, index32_uploads;
+    FrameGenerationMap<NativeConvertedIndexKey, NativeUploadAllocation, NativeConvertedIndexKeyHash>
+        converted_index_uploads;
     bool Reset() {
       if (!vertex_uploads.CanResetGeneration() || !index16_uploads.CanResetGeneration() ||
-          !index32_uploads.CanResetGeneration()) return false;
+          !index32_uploads.CanResetGeneration() || !converted_index_uploads.CanResetGeneration()) return false;
       return vertex_uploads.ResetGeneration() && index16_uploads.ResetGeneration() &&
-             index32_uploads.ResetGeneration();
+             index32_uploads.ResetGeneration() && converted_index_uploads.ResetGeneration();
     }
   };
 
@@ -1519,6 +1526,9 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
   // Index count RecordIndexedPrimitive uses instead of the command's own when
   // consecutive equivalent draws are recorded as one (0: none).
   uint32_t indexed_merge_count_override_ = 0;
+  std::vector<NativeCommand*> frame_texture_commands_scratch_;
+  void BindNativeIndexBuffer(VkCommandBuffer command_buffer, VkBuffer buffer,
+                             VkDeviceSize offset, VkIndexType index_type);
   void BindNativeVertexBuffer(VkCommandBuffer command_buffer, uint32_t binding, VkBuffer buffer,
                               VkDeviceSize offset);
   bool InitializeShaderCache();
@@ -1790,7 +1800,7 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
   void DestroyNativeTextureImage(NativeTextureImage& image);
   void DestroyNativeTextureViews(NativeTextureImage& image);
   void DestroyNativeSurfaceImage(NativeSurfaceImage& image);
-  void ReleasePendingSurfaceImages();
+  void ReleasePendingSurfaceImages(bool force_drain = false);
   void QueueSurfaceImageRelease(uint32_t handle);
   NativeTextureImage* GetOrCreateTextureImage(
       VkCommandBuffer command_buffer, const std::shared_ptr<const NativeTextureResource>& texture,
@@ -1882,7 +1892,8 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
                                      bool primitive_restart_enable = false, bool prewarm = false);
   void TryPrewarmDrawPipeline(const NativeCommand& command);
   bool GetRequiredVertexStreams(const NativePipelineState& state,
-                                std::array<bool, kVertexStreamCount>& required_streams) const;
+                                uint32_t& required_streams);
+  const std::vector<uint8_t>& PrepareHostIndexData(const NativeBufferResource& resource, bool index32);
   bool UploadBufferResource(const std::shared_ptr<const NativeBufferResource>& resource,
                             VkCommandBuffer command_buffer, bool index_buffer, bool index32,
                             const NativePipelineState* vertex_state, uint32_t vertex_stream,
@@ -2220,6 +2231,7 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
   std::unordered_set<uint32_t> dirty_texture_handles_;
   std::unordered_map<uint32_t, uint32_t> vector_font_ids_;
   NativeVirtualResourceRegistry virtual_resource_registry_;
+  std::atomic<uint64_t> virtual_surface_registry_revision_{1};
   uint64_t next_texture_generation_ = 1;
   std::mutex command_capture_mutex_;
   // State commands absorbed since the last queued command (command_capture_mutex_).
@@ -2591,6 +2603,7 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
   bool native_descriptor_layouts_update_after_bind_ = false;
   uint32_t native_descriptor_maximum_page_count_ = 0;
   NativeDrawStateCache<2> native_draw_state_cache_;
+  NativeRasterAreaMemo native_raster_area_memo_;
   NativeDescriptorSlotHandle native_null_image_descriptor_{};
   NativeDescriptorSlotHandle native_null_sampler_descriptor_{};
   uint32_t active_descriptor_copy_ = 0;
@@ -2817,6 +2830,7 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
   uint64_t texture_image_evicted_bytes_ = 0;
   uint64_t texture_allocation_retry_count_ = 0;
   uint64_t texture_allocation_failure_count_ = 0;
+  NativeSurfaceLookupCache<NativeSurfaceImage> surface_lookup_cache_;
   std::vector<std::unique_ptr<NativeSurfaceImage>> native_surface_images_;
   std::unordered_map<uint32_t, std::vector<NativeSurfaceImage*>> surface_images_by_handle_;
   struct NativeTextureReadback {
