@@ -109,6 +109,17 @@ class FrameGenerationMap {
     return {};
   }
 
+  bool CanResetGeneration() const { return generation_ < kMaximumGeneration; }
+
+  bool ResetGeneration() {
+    if (!CanResetGeneration()) {
+      return false;
+    }
+    ++generation_;
+    size_ = 0;
+    return true;
+  }
+
   // Lookup and lazily construct a value using one hash/probe sequence on
   // normal frame-recording paths. Unlike Find() followed by Insert(), a new
   // reservation no longer walks the table twice. The factory is NEVER called
@@ -150,17 +161,6 @@ class FrameGenerationMap {
       index = (index + 1) & mask;
     }
     return {};
-  }
-
-  bool CanResetGeneration() const { return generation_ < kMaximumGeneration; }
-
-  bool ResetGeneration() {
-    if (!CanResetGeneration()) {
-      return false;
-    }
-    ++generation_;
-    size_ = 0;
-    return true;
   }
 
   // Inspect only this generation; stale POD buckets retain no owners.
