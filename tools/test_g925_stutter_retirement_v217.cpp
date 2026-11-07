@@ -28,13 +28,13 @@ static size_t Retire(std::vector<Surface>& surfaces, uint64_t completed, bool fo
 }
 
 static void TestBoundedSurfaceRetirement() {
-  static_assert(kNativeSurfaceRetirementsPerFrame == 12);
-  assert(NativeSurfaceRetirementLimit(false) == 12);
+  static_assert(kNativeSurfaceRetirementsPerFrame == 6);
+  assert(NativeSurfaceRetirementLimit(false) == 6);
   assert(NativeSurfaceRetirementLimit(true) > 100000);
   assert(ShouldKeepNativeSurfacePending(33, 32, 0, true));
   assert(!ShouldKeepNativeSurfacePending(32, 32, 0, true));
-  assert(ShouldKeepNativeSurfacePending(32, 32, 12, false));
-  assert(!ShouldKeepNativeSurfacePending(32, 32, 11, false));
+  assert(ShouldKeepNativeSurfacePending(32, 32, 6, false));
+  assert(!ShouldKeepNativeSurfacePending(32, 32, 5, false));
 
   // 300 completed releases would stall one frame if destroyed together.
   // The renderer must be able to drain them across bounded present frames.
@@ -42,11 +42,11 @@ static void TestBoundedSurfaceRetirement() {
   for (size_t i = 0; i < surfaces.size(); ++i)
     surfaces[i].last_gpu_submission = i % 10 == 0 ? 120 : 100;
   size_t total = 0;
-  for (uint32_t frame = 0; frame < 30; ++frame) {
+  for (uint32_t frame = 0; frame < 45; ++frame) {
     const size_t n = Retire(surfaces, 100, false);
     assert(n <= kNativeSurfaceRetirementsPerFrame);
     total += n;
-    if (frame == 0) assert(n == 12);
+    if (frame == 0) assert(n == 6);
   }
   assert(total == 270);
   for (size_t i = 0; i < surfaces.size(); ++i) {
@@ -73,11 +73,11 @@ static void TestBoundedSurfaceRetirement() {
 }
 
 static void TestAgedBufferCleanupBudget() {
-  static_assert(GetNativeBufferReclamationWorkLimit(100, 100).max_resources == 16);
+  static_assert(GetNativeBufferReclamationWorkLimit(100, 100).max_resources == 8);
   static_assert(GetNativeBufferReclamationWorkLimit(101, 100).max_resources == 64);
   const auto idle = GetNativeBufferReclamationWorkLimit(128ull << 20, 256ull << 20);
   const auto pressured = GetNativeBufferReclamationWorkLimit(257ull << 20, 256ull << 20);
-  assert(idle.max_resources == 16 && idle.max_bytes == 4ull * 1024 * 1024);
+  assert(idle.max_resources == 8 && idle.max_bytes == 2ull * 1024 * 1024);
   assert(pressured.max_resources == 64 && pressured.max_bytes == 16ull * 1024 * 1024);
   // Reclamation must stay bounded in both modes; under pressure the old
   // aggressive work limits remain available.
@@ -88,6 +88,6 @@ static void TestAgedBufferCleanupBudget() {
 int main() {
   TestBoundedSurfaceRetirement();
   TestAgedBufferCleanupBudget();
-  std::cout << "PASS: 300 completed surfaces retired in <=12/frame batches, "
+  std::cout << "PASS: 300 completed surfaces retired in <=6/frame batches, "
                "in-flight fences, full idle drain, pressure-aware aged-buffer budgets\n";
 }
