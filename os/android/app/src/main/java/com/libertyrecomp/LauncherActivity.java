@@ -925,11 +925,12 @@ public class LauncherActivity extends Activity {
                     new String[] {"Default", "0", "1", "2"},
                     new String[] {"0", "1", "2"}),
             new GraphicsSetting("CPU boost",
-                    "How hard the game asks Android for CPU speed. Steady keeps the clocks up "
-                            + "(fewer drops, a little warmer); Battery saves power",
+                    "Maximum asks Android for 16ms CPU work (60 FPS goal, warmer). "
+                            + "Steady and Balanced are less aggressive; Battery saves power.",
                     new String[] {"android_performance_hint_target_ms"},
-                    new String[] {"Default", "Maximum", "Steady", "Balanced", "Battery"},
-                    new String[] {"20", "25", "30", "33"}),
+                    new String[] {"Default (16ms)", "Maximum (16ms)", "Steady (25ms)",
+                            "Balanced (30ms)", "Battery (33ms)"},
+                    new String[] {"16", "25", "30", "33"}),
             new GraphicsSetting("CPU response pacing",
                     "How often Android receives frame durations. Compare 25ms responsive "
                             + "against the original 100ms CPU governor feedback.",
