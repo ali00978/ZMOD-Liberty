@@ -149,6 +149,7 @@ inline T RexRelaxedLoad(T& target) {
 #include "native_spirv_reflection.h"
 #include "native_stencil_volume_policy.h"
 #include "native_zero_coverage_draw.h"
+#include "native_rectangle_batch.h"
 #include "hdr_present_ps.h"
 #include "native_msaa_policy.h"
 #include "native_resolve_policy.h"
@@ -17823,6 +17824,15 @@ bool Gta4NativeGraphicsSystem::EnsureFrameUploadCapacity(
           const VkDeviceSize rectangle_count = draw.vertex_count / 3;
           const VkDeviceSize expanded_size = rectangle_count * 4 * draw.stride;
           add_allocation(expanded_size, 16);
+          // Merged triangle strips need an index buffer containing four
+          // vertices per rectangle plus a restart marker between strips.
+          if (draw.vertex_count >= 6 && draw.vertex_count % 3 == 0) {
+            const uint32_t index_count =
+                NativeRectangleStripIndexCount(uint32_t(rectangle_count));
+            if (index_count)
+              add_allocation(VkDeviceSize(index_count) * sizeof(uint32_t),
+                             alignof(uint32_t));
+          }
         }
       }
       continue;
@@ -18070,6 +18080,15 @@ bool Gta4NativeGraphicsSystem::EnsureFrameUploadCapacityFast(
           const VkDeviceSize rectangle_count = draw.vertex_count / 3;
           const VkDeviceSize expanded_size = rectangle_count * 4 * draw.stride;
           add_allocation(expanded_size, 16);
+          // Merged triangle strips need an index buffer containing four
+          // vertices per rectangle plus a restart marker between strips.
+          if (draw.vertex_count >= 6 && draw.vertex_count % 3 == 0) {
+            const uint32_t index_count =
+                NativeRectangleStripIndexCount(uint32_t(rectangle_count));
+            if (index_count)
+              add_allocation(VkDeviceSize(index_count) * sizeof(uint32_t),
+                             alignof(uint32_t));
+          }
         }
       }
       continue;
@@ -21843,6 +21862,12 @@ void Gta4NativeGraphicsSystem::TryPrewarmDrawPipeline(const NativeCommand& comma
       std::memcpy(&draw, command.bytes.data(), sizeof(draw));
       primitive_type = draw.primitive_type;
       user_pointer_stride = draw.stride;
+      // Prewarm the same restart-enabled strip pipeline selected by the
+      // renderer when a RectangleList has two or more rectangles to merge.
+      primitive_restart_enable =
+          draw.primitive_type == uint32_t(xenos::PrimitiveType::kRectangleList) &&
+          draw.vertex_count >= 6 && draw.vertex_count % 3 == 0 &&
+          NativeRectangleStripIndexCount(draw.vertex_count / 3) != 0;
       break;
     }
     case CommandType::kDrawIndexedPrimitive: {
@@ -24049,7 +24074,20 @@ bool Gta4NativeGraphicsSystem::RecordPrimitiveUp(VkCommandBuffer command_buffer,
     return fail("zero-count-or-stride");
   }
 
-  VkPipeline pipeline = GetOrCreateDrawPipeline(command, draw.primitive_type, target, draw.stride);
+  // A RectangleList's three guest corners are expanded into four native
+  // vertices per rectangle. Previously each rectangle required a separate
+  // vkCmdDraw(4). With strip-restart, the exact same triangles become ONE
+  // vkCmdDrawIndexed without dropping or reordering any visible geometry.
+  bool merge_rectangles =
+      draw.primitive_type == uint32_t(xenos::PrimitiveType::kRectangleList) &&
+      draw.vertex_count >= 6 && draw.vertex_count % 3 == 0 &&
+      NativeRectangleStripIndexCount(draw.vertex_count / 3) != 0;
+  VkPipeline pipeline = GetOrCreateDrawPipeline(
+      command, draw.primitive_type, target, draw.stride, merge_rectangles);
+  if (!pipeline && merge_rectangles) {
+    merge_rectangles = false;
+    pipeline = GetOrCreateDrawPipeline(command, draw.primitive_type, target, draw.stride);
+  }
   NativeUploadAllocation vertex_allocation;
   if (!pipeline) {
     return fail("pipeline");
@@ -24211,6 +24249,8 @@ bool Gta4NativeGraphicsSystem::RecordPrimitiveUp(VkCommandBuffer command_buffer,
   uint32_t host_vertex_count = draw.vertex_count;
   NativeUploadAllocation quad_list_indices;
   uint32_t quad_list_index_count = 0;
+  NativeUploadAllocation rectangle_list_indices{};
+  uint32_t rectangle_list_index_count = 0;
   if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kRectangleList)) {
     if (!command.pipeline_state->vertex_declaration_resource || draw.vertex_count % 3) {
       return fail("rectangle-list-layout");
@@ -24303,6 +24343,21 @@ bool Gta4NativeGraphicsSystem::RecordPrimitiveUp(VkCommandBuffer command_buffer,
       }
     }
     vertex_allocation = expanded_allocation;
+    if (merge_rectangles) {
+      const uint32_t indices_count = NativeRectangleStripIndexCount(rectangle_count);
+      const VkDeviceSize bytes = VkDeviceSize(indices_count) * sizeof(uint32_t);
+      if (indices_count &&
+          AllocateUpload(bytes, alignof(uint32_t), rectangle_list_indices,
+                         NativeUploadKind::kIndex) &&
+          WriteNativeRectangleStripIndices(
+              {reinterpret_cast<uint32_t*>(rectangle_list_indices.mapping),
+               size_t(indices_count)}, rectangle_count)) {
+        rectangle_list_index_count = indices_count;
+      }
+      // If the additional upload is unavailable, the restart-enabled
+      // triangle-strip pipeline can still issue the original nonindexed
+      // per-rectangle draws: no geometry is discarded on an allocation miss.
+    }
   } else if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kQuadList)) {
     if (draw.vertex_count % 4) {
       return fail("quad-list-count");
@@ -24339,9 +24394,25 @@ bool Gta4NativeGraphicsSystem::RecordPrimitiveUp(VkCommandBuffer command_buffer,
   profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return BindNativeVertexBuffer(command_buffer, 0, vertex_buffer, vertex_offset); });
   if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kRectangleList)) {
     const uint32_t rectangle_count = host_vertex_count / 4;
-    for (uint32_t rectangle = 0; rectangle < rectangle_count; ++rectangle) {
-      ObserveNativeGpuProfileDraw(command, pipeline, target.samples, 4, 0);
-      profile::CpuCall(profile::CpuOp::kDriverDraw, [&] { if (!REXCVAR_GET(gta4_native_debug_gpu_attribution) || REXCVAR_GET(gta4_native_debug_gpu_attribution) == 1) dfn.vkCmdDraw(command_buffer, 4, 1, rectangle * 4, 0); });
+    if (rectangle_list_index_count) {
+      profile::CpuCall(profile::CpuOp::kDriverBind, [&] {
+        return BindNativeIndexBuffer(command_buffer, rectangle_list_indices.buffer,
+                                     rectangle_list_indices.offset, VK_INDEX_TYPE_UINT32);
+      });
+      ObserveNativeGpuProfileDraw(command, pipeline, target.samples, 0,
+                                  rectangle_list_index_count);
+      profile::CpuCall(profile::CpuOp::kDriverDraw, [&] {
+        if (REXCVAR_GET(gta4_native_debug_gpu_attribution) != 2) {
+          dfn.vkCmdDrawIndexed(command_buffer, rectangle_list_index_count, 1, 0, 0, 0);
+          AddNativeGpuProfileCounter(performance::Counter::kRectangleDrawsMerged,
+                                    rectangle_count - 1);
+        }
+      });
+    } else {
+      for (uint32_t rectangle = 0; rectangle < rectangle_count; ++rectangle) {
+        ObserveNativeGpuProfileDraw(command, pipeline, target.samples, 4, 0);
+        profile::CpuCall(profile::CpuOp::kDriverDraw, [&] { if (!REXCVAR_GET(gta4_native_debug_gpu_attribution) || REXCVAR_GET(gta4_native_debug_gpu_attribution) == 1) dfn.vkCmdDraw(command_buffer, 4, 1, rectangle * 4, 0); });
+      }
     }
   } else if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kQuadList)) {
     profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return BindNativeIndexBuffer(command_buffer, quad_list_indices.buffer, quad_list_indices.offset,
