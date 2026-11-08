@@ -24724,14 +24724,23 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
   if (required_size > command.index_buffer->payload.size()) {
     return fail("index-bounds");
   }
-  // Materialize CPU words once, but upload the original buffer only if it
-  // remains the selected GPU source after conversion/reordering below.
-  const auto& host_indices = PrepareHostIndexData(*command.index_buffer, index32);
+  // Ordinary indexed draws can reuse an existing GPU index buffer and never
+  // read its CPU copy. Only decode host indices for fan/quad/restart conversion,
+  // vertex-cache preprocessing, MoltenVK repair or explicitly enabled diagnostics.
+  // The buffer's generation and GPU lifetime remain owned by UploadBufferResource.
+  const std::vector<uint8_t>* prepared_host_indices = nullptr;
+  const auto& cpu_indices = [&]() -> const std::vector<uint8_t>& {
+    if (!prepared_host_indices)
+      prepared_host_indices = &PrepareHostIndexData(*command.index_buffer, index32);
+    return *prepared_host_indices;
+  };
+  const auto original_index_bytes = [&]() -> const uint8_t* {
+    return cpu_indices().data() + size_t(draw.start_index) * size_t(element_size);
+  };
   NativeUploadAllocation quad_list_indices;
   NativeUploadAllocation primitive_restart_indices;
   std::shared_ptr<const std::vector<uint8_t>> fan_indices;
-  const uint8_t* selected_index_bytes =
-      host_indices.data() + size_t(draw.start_index) * size_t(element_size);
+  const uint8_t* selected_index_bytes = nullptr;
   uint32_t host_index_count = draw.index_count;
   uint32_t host_start_index = draw.start_index;
   VkBuffer host_index_buffer = VK_NULL_HANDLE;
@@ -24739,8 +24748,7 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
   if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kTriangleFan)) {
     const NativeTriangleFanKey fan_key{draw.start_index, draw.index_count,
         draw.primitive_restart_index, index32, guest_restart_enabled};
-    const auto& source = index32 ? command.index_buffer->host_index32_payload
-                                : command.index_buffer->host_index16_payload;
+    const auto& source = cpu_indices();
     fan_indices = command.index_buffer->triangle_fan_cache.Get(
         source, fan_key, xenos::kVertexIndexMask);
     if (!fan_indices) return fail("triangle-fan-index-range");
@@ -24783,7 +24791,7 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
       if (!AllocateUpload(expanded_size, size_t(element_size), quad_list_indices,
                           NativeUploadKind::kIndex) ||
           !profile::CpuCall(profile::CpuOp::kIndexConvert, [&] {
-            return WriteNativeConvertedIndices(host_indices, key,
+            return WriteNativeConvertedIndices(cpu_indices(), key,
                 {quad_list_indices.mapping, size_t(expanded_size)});
           })) return fail("quad-list-upload-allocation");
       if (!resources.converted_index_uploads.Insert(key, quad_list_indices))
@@ -24831,7 +24839,7 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
       auto found = ranges.find(range_key);
       if (found == ranges.end()) {
         auto range = std::make_shared<NativeVertexCacheRange>();
-        if (NativeVertexCacheOptimizer::Get().Enqueue(range, selected_index_bytes,
+        if (NativeVertexCacheOptimizer::Get().Enqueue(range, original_index_bytes(),
                                                       host_index_count, index32)) {
           found = ranges.emplace(range_key, std::move(range)).first;
         }
@@ -24892,7 +24900,7 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
       if (!AllocateUpload(restart_size, size_t(element_size), primitive_restart_indices,
                           NativeUploadKind::kIndex) ||
           !profile::CpuCall(profile::CpuOp::kIndexConvert, [&] {
-            return WriteNativeConvertedIndices(host_indices, key,
+            return WriteNativeConvertedIndices(cpu_indices(), key,
                 {primitive_restart_indices.mapping, size_t(restart_size)});
           })) return fail("primitive-restart-upload-allocation");
       if (!resources.converted_index_uploads.Insert(key, primitive_restart_indices))
@@ -24917,6 +24925,7 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
       (CachedDiagnosticsEnabled(rex::diagnostics::Category::kTransition) &&
        transition::IsEnabled() && transition::ActiveTransitionId());
   if (collect_indexed_diagnostics) {
+    if (!selected_index_bytes) selected_index_bytes = original_index_bytes();
     uint32_t minimum_index = UINT32_MAX;
     uint32_t maximum_index = 0;
     for (uint32_t index = 0; index < host_index_count; ++index) {
@@ -25155,6 +25164,7 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
   const bool moltenvk_strip_restart =
       vulkan_provider->vulkan_device()->properties().driverID == VK_DRIVER_ID_MOLTENVK && strip;
   if (moltenvk_strip_restart && !guest_restart_enabled) {
+    if (!selected_index_bytes) selected_index_bytes = original_index_bytes();
     const bool disabled_restart_sentinel_used =
         index32 ? primitive_restart::IsDisabledRestartSentinelUsed(
                       reinterpret_cast<const uint32_t*>(selected_index_bytes), host_index_count)
@@ -25232,7 +25242,8 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
     }
   }
   ObserveNativeGpuProfileDraw(command, pipeline, target.samples, 0, host_index_count);
-  if (REXCVAR_GET(gta4_native_gpu_breadcrumbs) && selected_index_bytes && host_index_count) {
+  if (REXCVAR_GET(gta4_native_gpu_breadcrumbs) && host_index_count) {
+    if (!selected_index_bytes) selected_index_bytes = original_index_bytes();
     // Diagnostics: an index past the end of a vertex stream makes the GPU
     // fetch outside the buffer (suspected cause of shadow-pass GPU hangs).
     uint32_t max_index = 0;
