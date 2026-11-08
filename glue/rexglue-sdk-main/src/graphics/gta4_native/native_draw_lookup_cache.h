@@ -80,6 +80,9 @@ class NativeSurfaceLookupCache {
       auto& entry = entries_[start + way];
       if (entry.epoch != epoch_ || !entry.image ||
           entry.registry_revision != registry_revision) {
+        // A stale revision can still be present in the hot MRU. Clear the
+        // borrowed pointer before reusing this backing slot.
+        Forget(entry);
         entry = {key, registry_revision, image, epoch_};
         Remember(key, registry_revision, image);
         return;
