@@ -6,6 +6,7 @@
 #include <iostream>
 #include <limits>
 #include <random>
+#include <string_view>
 #include "graphics/gta4_native/native_zero_coverage_draw.h"
 #include "graphics/gta4_native/native_performance_samples.h"
 
