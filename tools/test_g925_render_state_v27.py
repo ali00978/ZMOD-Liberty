@@ -9,8 +9,11 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 SDK = ROOT / 'glue/rexglue-sdk-main'
 source = (SDK / 'src/graphics/gta4_native/graphics_system.cpp').read_text()
-# Every native index path must be observed, including expanded fans and quads.
-assert source.count('BindNativeIndexBuffer(command_buffer,') == 6
+# Every native index path must be observed, including expanded fans,
+# quads and the new exact RectangleList primitive-restart merge (7 paths).
+assert source.count('BindNativeIndexBuffer(command_buffer,') == 7
+assert 'rectangle_list_indices.buffer' in source
+assert 'rectangle_list_index_count' in source
 assert source.count('.vkCmdBindIndexBuffer(') == 1
 assert '/*all_tracked_state_dynamic=*/true' in source
 begin = source.index('const std::array<VkDynamicState, 7> dynamic_states')
