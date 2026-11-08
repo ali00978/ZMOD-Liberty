@@ -36249,27 +36249,30 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
     // wasted vertex/index/pixel draw ONLY if no query or diagnostic could
     // observe its geometry. This is more conservative than general invisible
     // output elision: no shader outputs or valid scissor regions are altered.
-    const bool zero_coverage_query_active =
-        fire_query != UINT32_MAX || translucent_query_index != UINT32_MAX ||
-        water_query_index != UINT32_MAX;
-    const bool zero_coverage_diagnostic_active =
-        diagnostic_frame || legacy_diagnostics || diagnostic_variants_enabled ||
-        force_content_probe || fire_images_ || collect_frame_diagnostics ||
-        REXCVAR_GET(gta4_native_gpu_breadcrumbs) ||
-        REXCVAR_GET(gta4_native_debug_gpu_attribution) != 0 ||
-        NativeRendererEventTraceEnabled() || IsArtificialLightTraceEnabled() ||
-        command.fire_trace || command.bulb_trace || command.phone_trace ||
-        command.tv_trace || command.light_trace_id;
-    const bool zero_coverage_temporal_or_special =
-        command.temporal_scene_binding || command.temporal_instance ||
-        target.temporal_shader || command.temporal_composite_mode;
-    const bool elide_zero_coverage_draw =
+    // Cheap scissor test runs first. Queries, renderer probes and temporal
+    // guards are checked only for a rare actually-empty native rectangle;
+    // otherwise the thousands of normal draws pay almost no added CPU cost.
+    const bool potential_zero_coverage_draw =
         REXCVAR_GET(gta4_native_elide_zero_coverage_draws) && draw_command &&
         command.pipeline_state && command.shader_state &&
+        NativeRasterScissorHasNoPixels(
+            command.fixed_function_state.scissor, target.logical_width, target.logical_height);
+    const bool elide_zero_coverage_draw =
+        potential_zero_coverage_draw &&
         CanElideNativeZeroCoverageDraw(
             command.fixed_function_state.scissor, target.logical_width,
-            target.logical_height, zero_coverage_query_active,
-            zero_coverage_diagnostic_active, zero_coverage_temporal_or_special);
+            target.logical_height,
+            fire_query != UINT32_MAX || translucent_query_index != UINT32_MAX ||
+                water_query_index != UINT32_MAX,
+            diagnostic_frame || legacy_diagnostics || diagnostic_variants_enabled ||
+                force_content_probe || fire_images_ || collect_frame_diagnostics ||
+                REXCVAR_GET(gta4_native_gpu_breadcrumbs) ||
+                REXCVAR_GET(gta4_native_debug_gpu_attribution) != 0 ||
+                NativeRendererEventTraceEnabled() || IsArtificialLightTraceEnabled() ||
+                command.fire_trace || command.bulb_trace || command.phone_trace ||
+                command.tv_trace || command.light_trace_id,
+            command.temporal_scene_binding || command.temporal_instance ||
+                target.temporal_shader || command.temporal_composite_mode);
     bool command_recorded = false;
     if (!semantic_lineage_ready) {
       trace_deferred_light_draw(false);
