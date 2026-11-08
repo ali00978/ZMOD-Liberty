@@ -91,7 +91,27 @@ static void raster_replay() {
   auto third = base;
   third.scissor[1] += 8;
   memo.Store(third, legacy(third));
-  check(!memo.Find(base) && memo.Find(second) && memo.Find(third));
+  check(memo.Find(base) && memo.Find(second) && memo.Find(third));
+  // Four alternating native target identities must stay hot. The fifth
+  // distinct identity evicts the true LRU, never a recently used entry.
+  auto fourth = base;
+  fourth.scissor[2] -= 8;
+  memo.Store(fourth, legacy(fourth));
+  check(memo.Find(base) && memo.Find(second) && memo.Find(third) && memo.Find(fourth));
+  unsigned four_state_computes = 0;
+  for (unsigned draw = 0; draw < 20000; ++draw) {
+    const auto& key = draw % 4 == 0 ? base : draw % 4 == 1 ? second :
+                      draw % 4 == 2 ? third : fourth;
+    same(memo.Get(key, [&] { ++four_state_computes; return ComputeNativeRasterArea(key); }),
+         legacy(key));
+  }
+  check(four_state_computes == 0);
+  auto fifth = base;
+  fifth.scissor[3] -= 12;
+  memo.Store(fifth, legacy(fifth));
+  // The last iteration touched the fourth state, so the oldest is base.
+  check(!memo.Find(base) && memo.Find(second) && memo.Find(third) &&
+        memo.Find(fourth) && memo.Find(fifth));
   memo.Reset();
   check(!memo.Find(base) && !memo.Find(second) && !memo.Find(third));
   unsigned computations = 0;
