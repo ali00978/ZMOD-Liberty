@@ -157,6 +157,7 @@ enum class Counter : uint8_t {
   kConvertedIndexUploadReuses,
   kPlainIndexUploadsSkipped,
   kZeroCoverageDrawSkips,
+  kRectangleDrawsMerged,
   kCount,
 };
 
