@@ -180,38 +180,50 @@ struct NativeVertexStreamSelection {
 };
 
 // Copies of an immutable pipeline snapshot may carry this memo. Both resource
-// identities and their input signatures must match before the copy can hit.
-// Two exact entries allow an immutable pipeline snapshot to reuse alternating
-// stream declarations without repeating expensive vertex-layout discovery.
-// No shader or declaration pointer is dereferenced by the cache itself.
+// pointers and their exact input signatures are checked; pointer identity is
+// never taken as proof that a different vertex declaration has the same layout.
+// Four recent declarations avoid repeating vertex-stream discovery when a
+// shader alternates scene, skinned, reflected and shadow input layouts.
 class NativeVertexStreamMemo {
  public:
   const NativeVertexStreamSelection* Find(const NativeVertexStreamKey& key) const {
-    if (recent_.valid && recent_.key == key) return &recent_.selection;
-    if (previous_.valid && previous_.key == key) return &previous_.selection;
+    for (size_t position = 0; position < kSlots; ++position) {
+      const Entry& entry = entries_[order_[position]];
+      if (entry.valid && entry.key == key) {
+        Promote(position);
+        return &entry.selection;
+      }
+    }
     return nullptr;
   }
   void Store(const NativeVertexStreamKey& key, NativeVertexStreamSelection selection) {
-    if (recent_.valid && recent_.key == key) {
-      recent_.selection = selection;
-    } else if (previous_.valid && previous_.key == key) {
-      // Promote a previously cached identity without dropping either result.
-      std::swap(recent_, previous_);
-      recent_.selection = selection;
-    } else {
-      previous_ = recent_;
-      recent_ = {key, selection, true};
+    for (size_t position = 0; position < kSlots; ++position) {
+      Entry& entry = entries_[order_[position]];
+      if (entry.valid && entry.key == key) {
+        entry.selection = selection;
+        Promote(position);
+        return;
+      }
     }
+    const size_t victim = order_[kSlots - 1];
+    entries_[victim] = {key, selection, true};
+    Promote(kSlots - 1);
   }
 
  private:
+  static constexpr size_t kSlots = 4;
   struct Entry {
     NativeVertexStreamKey key{};
     NativeVertexStreamSelection selection{};
     bool valid = false;
   };
-  Entry recent_{};
-  Entry previous_{};
+  void Promote(size_t position) const {
+    const size_t slot = order_[position];
+    for (; position > 0; --position) order_[position] = order_[position - 1];
+    order_[0] = slot;
+  }
+  std::array<Entry, kSlots> entries_{};
+  mutable std::array<size_t, kSlots> order_{0, 1, 2, 3};
 };
 
 }  // namespace rex::graphics::gta4_native
