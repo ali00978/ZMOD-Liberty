@@ -56,7 +56,7 @@ static void VerifyInvalidRequestsNeverWrite() {
   const auto unchanged = [&] {
     for (auto value : output) assert(value == 0xD2);
   };
-  NativeConvertedIndexKey key{1, 1, 5, 0x1234, 0xFFFF,
+  NativeConvertedIndexKey key{1, 5, 5, 0x1234, 0xFFFF,
                                NativeIndexConversion::kRestart, false};
   output.fill(0xD2);
   assert(!WriteNativeConvertedIndices(source, key, output));  // range overrun
