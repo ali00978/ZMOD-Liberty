@@ -148,6 +148,7 @@ inline T RexRelaxedLoad(T& target) {
 #include "native_pipeline_recipe.h"
 #include "native_spirv_reflection.h"
 #include "native_stencil_volume_policy.h"
+#include "native_zero_coverage_draw.h"
 #include "hdr_present_ps.h"
 #include "native_msaa_policy.h"
 #include "native_resolve_policy.h"
@@ -386,6 +387,9 @@ REXCVAR_DEFINE_BOOL(gta4_native_skip_repeated_clears, true, "GTA IV/Graphics/Nat
 REXCVAR_DEFINE_BOOL(gta4_native_skip_invisible_draws, true, "GTA IV/Graphics/Native Renderer",
                     "Do not record draws that can change no pixel: no depth or stencil writes and "
                     "every written color target either masked off or blended as ZERO*src+ONE*dst");
+REXCVAR_DEFINE_BOOL(gta4_native_elide_zero_coverage_draws, true, "GTA IV/Graphics/Native Renderer",
+                    "Avoid submitting a GPU draw with an empty native guest scissor, unless "
+                    "an occlusion query, diagnostic probe or temporal side effect may observe it");
 REXCVAR_DEFINE_BOOL(gta4_native_empty_fragment, true, "GTA IV/Graphics/Native Renderer",
                     "Give pipelines without a pixel shader but with color attachments an empty "
                     "fragment shader instead of none");
@@ -36240,6 +36244,32 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
       }
     }
     const uint32_t fire_query = BeginFireQuery(command_buffer, command, translucent_query_index);
+    // A completely empty scissor produces no fragments. Preserve all guest
+    // timeline and render-scope load/clear operations, but omit the otherwise
+    // wasted vertex/index/pixel draw ONLY if no query or diagnostic could
+    // observe its geometry. This is more conservative than general invisible
+    // output elision: no shader outputs or valid scissor regions are altered.
+    const bool zero_coverage_query_active =
+        fire_query != UINT32_MAX || translucent_query_index != UINT32_MAX ||
+        water_query_index != UINT32_MAX;
+    const bool zero_coverage_diagnostic_active =
+        diagnostic_frame || legacy_diagnostics || diagnostic_variants_enabled ||
+        force_content_probe || fire_images_ || collect_frame_diagnostics ||
+        REXCVAR_GET(gta4_native_gpu_breadcrumbs) ||
+        REXCVAR_GET(gta4_native_debug_gpu_attribution) != 0 ||
+        NativeRendererEventTraceEnabled() || IsArtificialLightTraceEnabled() ||
+        command.fire_trace || command.bulb_trace || command.phone_trace ||
+        command.tv_trace || command.light_trace_id;
+    const bool zero_coverage_temporal_or_special =
+        command.temporal_scene_binding || command.temporal_instance ||
+        target.temporal_shader || command.temporal_composite_mode;
+    const bool elide_zero_coverage_draw =
+        REXCVAR_GET(gta4_native_elide_zero_coverage_draws) && draw_command &&
+        command.pipeline_state && command.shader_state &&
+        CanElideNativeZeroCoverageDraw(
+            command.fixed_function_state.scissor, target.logical_width,
+            target.logical_height, zero_coverage_query_active,
+            zero_coverage_diagnostic_active, zero_coverage_temporal_or_special);
     bool command_recorded = false;
     if (!semantic_lineage_ready) {
       trace_deferred_light_draw(false);
@@ -36247,6 +36277,11 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
       if (collect_frame_diagnostics) {
         ++failed_draws;
       }
+    } else if (elide_zero_coverage_draw) {
+      // No Vulkan draw is emitted. Keeping the active rendering scope matters:
+      // its attachment load-op clears and any earlier writes still happen.
+      AddNativeGpuProfileCounter(performance::Counter::kZeroCoverageDrawSkips);
+      command_recorded = true;
     } else if (command.type == CommandType::kDrawPrimitive) {
       command_recorded =
           RecordPrimitive(command_buffer, command, target.width, target.height, target, resources);
