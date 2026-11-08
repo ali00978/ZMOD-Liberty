@@ -30,12 +30,12 @@ template <typename Image, size_t Capacity = 64>
 class NativeSurfaceLookupCache {
  public:
   Image* Find(const NativeSurfaceLookupKey& key, uint64_t registry_revision) const {
-    // The detailed G925 2.20 phone trace records around 6,800 successful
-    // surface lookups/frame. Color/depth targets often alternate. Probe two
-    // exact, most recently used keys before hashing the 64-entry set cache.
-    // Both lookup paths require the published registry revision and epoch.
-    for (size_t probe = 0; probe < 2; ++probe) {
-      const size_t slot = hot_recent_ ^ probe;
+    // Phone traces record around 6,800 successful surface lookups/frame.
+    // Scene color, depth, reflection and presentation may cycle within a
+    // single frame. Try four EXACT, recent identities before hashing the set
+    // cache. Order uses lightweight indices: cached image entries never move.
+    for (size_t probe = 0; probe < hot_order_.size(); ++probe) {
+      const size_t slot = hot_order_[probe];
       const auto& hot = hot_[slot];
       // A color/depth switch usually changes the handle or role. Reject
       // that candidate before comparing its full nine-word descriptor.
@@ -45,7 +45,7 @@ class NativeSurfaceLookupCache {
           hot.key.depth != key.depth || hot.key.samples != key.samples) continue;
       if (hot.epoch == epoch_ && hot.image &&
           hot.registry_revision == registry_revision && hot.key == key) {
-        hot_recent_ = slot;
+        PromoteHot(probe);
         return hot.image;
       }
     }
@@ -96,8 +96,8 @@ class NativeSurfaceLookupCache {
   void Invalidate() {
     // The registry owns image lifetimes. Immediately discard borrowed hot
     // pointers; generation invalidation keeps the main array O(1).
-    hot_[0].image = nullptr;
-    hot_[1].image = nullptr;
+    for (auto& hot : hot_) hot.image = nullptr;
+    hot_order_ = {0, 1, 2, 3};
     if (++epoch_ == 0) {
       for (auto& entry : entries_) entry = {};
       next_victim_.fill(0);
@@ -128,17 +128,25 @@ class NativeSurfaceLookupCache {
     uint64_t epoch = 0;
   };
   // Recorder-local, borrowed pointers; no ownership or cross-frame lifetime.
-  // The hot pair tracks the two latest exact color/depth surface identities.
+  // A true MRU ordering ensures third/fourth surface variants do not evict
+  // a hot color/depth pair. Only the index order changes on cache hits.
+  void PromoteHot(size_t position) const {
+    const size_t slot = hot_order_[position];
+    for (; position > 0; --position) hot_order_[position] = hot_order_[position - 1];
+    hot_order_[0] = slot;
+  }
   void Remember(const NativeSurfaceLookupKey& key, uint64_t revision, Image* image) const {
-    for (size_t i = 0; i < 2; ++i) {
-      if (hot_[i].image && hot_[i].epoch == epoch_ && hot_[i].key == key) {
-        hot_[i] = {key, revision, image, epoch_};
-        hot_recent_ = i;
+    for (size_t position = 0; position < hot_order_.size(); ++position) {
+      const size_t slot = hot_order_[position];
+      if (hot_[slot].image && hot_[slot].epoch == epoch_ && hot_[slot].key == key) {
+        hot_[slot] = {key, revision, image, epoch_};
+        PromoteHot(position);
         return;
       }
     }
-    hot_recent_ ^= size_t(1);
-    hot_[hot_recent_] = {key, revision, image, epoch_};
+    const size_t victim = hot_order_.back();
+    hot_[victim] = {key, revision, image, epoch_};
+    PromoteHot(hot_order_.size() - 1);
   }
   void Forget(const Entry& evicted) {
     if (evicted.epoch != epoch_ || !evicted.image) return;
@@ -147,8 +155,8 @@ class NativeSurfaceLookupCache {
         entry.image = nullptr;
     }
   }
-  mutable std::array<Entry, 2> hot_{};
-  mutable size_t hot_recent_ = 0;
+  mutable std::array<Entry, 4> hot_{};
+  mutable std::array<size_t, 4> hot_order_{0, 1, 2, 3};
   std::array<Entry, Capacity> entries_{};
   std::array<uint8_t, kSetCount> next_victim_{};
   uint64_t epoch_ = 1;
