@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate exact two-way surface MRU used by the native G925 recorder."""
+"""Validate four-way exact surface MRU with per-revision lifetime safety."""
 from pathlib import Path
 import os
 import shutil
@@ -11,15 +11,17 @@ SDK = ROOT / "glue/rexglue-sdk-main"
 header = (SDK / "src/graphics/gta4_native/native_draw_lookup_cache.h").read_text()
 source = (SDK / "src/graphics/gta4_native/graphics_system.cpp").read_text()
 assert "hot_.size()" not in header  # fixed two-entry storage, no dynamic allocation
-assert "mutable std::array<Entry, 2> hot_{};" in header
+assert "mutable std::array<Entry, 4> hot_{};" in header
 assert "hot.epoch == epoch_ && hot.image" in header
 assert "hot.registry_revision == registry_revision && hot.key == key" in header
 assert "const size_t start = SetIndex(key) * kWays;" in header
 assert header.index("hot.registry_revision == registry_revision") < header.index("const size_t start = SetIndex(key) * kWays;")
 assert "Remember(key, registry_revision, entry.image);" in header
 assert "Forget(entries_[start + victim]);" in header
-assert "hot_[0].image = nullptr;" in header
-assert "hot_[1].image = nullptr;" in header
+assert "for (auto& hot : hot_) hot.image = nullptr;" in header
+assert "hot_order_ = {0, 1, 2, 3};" in header
+assert "PromoteHot(probe);" in header
+assert "Forget(entry);" in header
 assert "surface_lookup_cache_.Invalidate();" in source
 assert "surface_lookup_cache_.Find(" in source
 
