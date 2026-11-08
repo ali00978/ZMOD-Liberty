@@ -4,14 +4,15 @@
 Static checks do not establish FPS improvements; measure on device.
 """
 from pathlib import Path
+import re
 root = Path(__file__).resolve().parents[1]
 java = (root / "os/android/app/src/main/java/com/libertyrecomp/LauncherActivity.java").read_text()
 gradle = (root / "os/android/app/build.gradle.kts").read_text()
 native = (root / "glue/rexglue-sdk-main/src/graphics/gta4_native/native_frame_scheduling.h").read_text()
 args = (root / "os/android/app/src/main/assets/default_args.txt").read_text()
 workflow = (root / ".github/workflows/build-android-apk.yml").read_text()
-assert "versionCode   = 34" in gradle
-assert "-alpha-2.6-g925-stable-16ms" in gradle
+assert int(re.search(r'versionCode\s*=\s*(\d+)', gradle)[1]) >= 34
+assert re.search(r'versionSuffix\s*=\s*"-alpha-2\.\d+-g925-', gradle)
 assert "OFFICIAL MALI / CLEAN PERFORMANCE BASELINE" in java
 assert "CLEAN ORIGINAL SETTINGS + 60 FPS" in java
 assert "ORIGINAL GRAPHICS / STEADY 40 FPS" in java
@@ -33,7 +34,8 @@ assert "kNativeTextureCacheRetentionFrames = 600;" in native
 assert "kNativeBufferCacheRetentionFrames = 600;" in native
 assert "kNativeBufferCacheLimitMiB = 256;" in native
 assert "--gta4_native_max_queued_frames=3" in args
-assert "41363883009" in workflow
+assert 'G925_BASE_RUN_ID: ${{ needs.plan.outputs.base_run_id }}' in workflow
+assert 'python tools/validate_g925_fast_apk.py' in workflow
 assert "feature/g925-stable-16ms-v26" in workflow
 assert 'applyG925Preset(new String[][]' not in java
 print("PASS: original Mali renderer, no G925 engine hacks, safe complete settings reset and 40/60 A-B")

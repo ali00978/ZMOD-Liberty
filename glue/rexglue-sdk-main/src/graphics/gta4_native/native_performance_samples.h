@@ -152,6 +152,13 @@ enum class Counter : uint8_t {
   kConstantBindingUploads,
   kTextureBindingReuses,
   kConstantBindingOwners,
+  kSurfaceLookupReuses,
+  kVertexLayoutReuses,
+  kConvertedIndexUploadReuses,
+  kPlainIndexUploadsSkipped,
+  kZeroCoverageDrawSkips,
+  kRectangleDrawsMerged,
+  kSequentialDrawsMerged,
   kCount,
 };
 
