@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <utility>
 
 namespace rex::graphics::gta4_native {
 
@@ -37,10 +38,28 @@ class NativeExactMemo {
     return entry.value;
   }
 
+  // Get is the draw-recording hot path. A hit in the older slot becomes
+  // most-recently used, so an occasional third raster state does not evict the
+  // state the recorder just consumed. Find() remains a read-only peek for
+  // callers that do not want to change eviction order.
+  // On a miss, Find()+Store() previously compared the latest large key twice.
+  // Probe both slots once and fill the older slot directly.
   template <typename Compute>
   const Value& Get(const Key& key, Compute compute) {
-    if (const Value* value = Find(key)) return *value;
-    return Store(key, compute());
+    if (entries_[most_recent_].valid && entries_[most_recent_].key == key)
+      return entries_[most_recent_].value;
+    const size_t other = most_recent_ ^ size_t(1);
+    if (entries_[other].valid && entries_[other].key == key) {
+      most_recent_ = other;
+      return entries_[other].value;
+    }
+    Value computed = compute();
+    Entry& entry = entries_[other];
+    entry.value = std::move(computed);
+    entry.key = key;
+    entry.valid = true;
+    most_recent_ = other;
+    return entry.value;
   }
 
   void Reset() {
