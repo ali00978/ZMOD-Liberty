@@ -23,13 +23,17 @@ static void TestExactMemo() {
   assert(memo.Find(1) && *memo.Find(1) == 21);
   assert(memo.Find(2) && *memo.Find(2) == 38);
   memo.Store(3, 57);
-  assert(memo.Find(3) && memo.Find(1));
-  assert(!memo.Find(2)); // latest store replaces only the older entry
+  memo.Store(4, 76);
+  assert(memo.Find(1) && memo.Find(2) && memo.Find(3) && memo.Find(4));
+  // Find is a non-promoting peek; the first of the four states is LRU.
+  memo.Store(5, 95);
+  assert(!memo.Find(2));
+  assert(memo.Find(1) && memo.Find(3) && memo.Find(4) && memo.Find(5));
   auto copy = memo;
-  assert(copy.Find(1) && copy.Find(3));
+  assert(copy.Find(1) && copy.Find(3) && copy.Find(4) && copy.Find(5));
   memo.Reset();
-  assert(!memo.Find(1) && !memo.Find(2) && !memo.Find(3));
-  assert(copy.Find(1) && copy.Find(3)); // copies remain independent
+  assert(!memo.Find(1) && !memo.Find(2) && !memo.Find(3) && !memo.Find(4) && !memo.Find(5));
+  assert(copy.Find(1) && copy.Find(3) && copy.Find(5)); // copies remain independent
 }
 
 static void TestVertexMemo() {
@@ -50,12 +54,20 @@ static void TestVertexMemo() {
   auto c = b; ++c.input_signature;
   assert(!memo.Find(c));
   memo.Store(c, {31, true});
-  assert(memo.Find(c) && memo.Find(a));
-  assert(!memo.Find(b)); // signature prevents wrong-layout reuse
+  assert(memo.Find(c) && memo.Find(a) && memo.Find(b));
+  auto d = b; ++d.declaration_hash;
+  memo.Store(d, {39, true});
+  assert(memo.Find(a) && memo.Find(b) && memo.Find(c) && memo.Find(d));
+  // Enforce deterministic LRU order using actual Find() promotion.
+  memo.Find(a); memo.Find(b); memo.Find(c); memo.Find(d);
+  auto e = b; e.declaration_hash += 7;
+  memo.Store(e, {47, true});
+  assert(!memo.Find(a));
+  assert(memo.Find(b) && memo.Find(c) && memo.Find(d) && memo.Find(e));
   auto snapshot = memo;
-  assert(snapshot.Find(a) && snapshot.Find(c));
-  c.declaration_hash ^= 17;
-  assert(!snapshot.Find(c));
+  assert(snapshot.Find(b) && snapshot.Find(c) && snapshot.Find(e));
+  e.declaration_hash ^= 17;
+  assert(!snapshot.Find(e));
 }
 
 using Resolve = NativeResolveDescriptorCache<uint64_t>;
