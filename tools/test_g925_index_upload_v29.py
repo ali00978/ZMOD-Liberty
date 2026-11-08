@@ -15,7 +15,15 @@ assert fallback>part.index('NativeVertexCacheOptimizer::Get().Enqueue(')
 assert part.index('UploadBufferResource(command.index_buffer,')>fallback
 assert part.count('resources.converted_index_uploads.Find(key)')==2
 assert part.count('resources.converted_index_uploads.Insert(key,')==2
-assert part.count('WriteNativeConvertedIndices(host_indices, key,')==2
+assert part.count('WriteNativeConvertedIndices(cpu_indices(), key,')==2
+# Indexed hot path does not materialize the CPU index vector until conversion
+# or one of the special Vulkan/diagnostic paths needs the contents.
+assert 'const std::vector<uint8_t>* prepared_host_indices = nullptr;' in part
+assert 'if (!prepared_host_indices)' in part
+assert 'original_index_bytes()' in part
+assert "if (!selected_index_bytes) selected_index_bytes = original_index_bytes();" in part
+assert part.index('const auto& cpu_indices = ') < part.index('if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kTriangleFan))')
+assert part.index('if (!host_index_buffer) {') < part.index('if (collect_indexed_diagnostics) {')
 assert 'converted_index_uploads.CanResetGeneration()' in header
 assert 'converted_index_uploads.ResetGeneration()' in header
 assert 'const auto reset_recording_resources = MakeScopeExit(' in src
