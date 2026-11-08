@@ -148,9 +148,27 @@ int main() {
   memo.Store(third_layout, {99, true});
   assert(memo.Find(third_layout) && memo.Find(third_layout)->mask == 99);
   assert(memo.Find(layout) && memo.Find(layout)->mask == 37);
-  assert(!memo.Find(other));  // Older entry is evicted, never aliased.
+  assert(memo.Find(other) && memo.Find(other)->mask == 0);
+  auto fourth_layout = other;
+  fourth_layout.input_signature += 7;
+  memo.Store(fourth_layout, {101, true});
+  // The four alternating exact layouts must all be retained, with no
+  // declaration/stream aliasing and without redoing discovery.
+  for (unsigned i = 0; i < 20000; ++i) {
+    assert(memo.Find(layout) && memo.Find(layout)->mask == 37);
+    assert(memo.Find(other) && memo.Find(other)->mask == 0);
+    assert(memo.Find(third_layout) && memo.Find(third_layout)->mask == 99);
+    assert(memo.Find(fourth_layout) && memo.Find(fourth_layout)->mask == 101);
+  }
+  auto fifth_layout = other;
+  fifth_layout.input_signature += 9;
+  memo.Store(fifth_layout, {103, true});
+  assert(!memo.Find(layout));  // Least recently used fourth-way entry.
+  assert(memo.Find(other) && memo.Find(third_layout) && memo.Find(fourth_layout));
+  assert(memo.Find(fifth_layout) && memo.Find(fifth_layout)->mask == 103);
   auto snapshot_copy = memo;
-  assert(snapshot_copy.Find(layout) && snapshot_copy.Find(third_layout));
+  assert(snapshot_copy.Find(other) && snapshot_copy.Find(third_layout) &&
+         snapshot_copy.Find(fourth_layout) && snapshot_copy.Find(fifth_layout));
   // Sparse stream iteration must visit exactly the original stream set.
   for (uint32_t mask = 0; mask < (1u << 17); ++mask) {
     uint32_t visited = 0, previous = 0;
