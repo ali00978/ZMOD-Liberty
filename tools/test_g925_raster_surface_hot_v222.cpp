@@ -31,9 +31,9 @@ static void TestRasterGetPromotesConsumedEntry() {
   assert(get(3) == 30 && calculated == 3);
   assert(CountingKey::comparisons == 2); // each valid key compared just once
   assert(get(1) == 10 && calculated == 3); // A survived because it was consumed
-  assert(!cache.Find({2}));
-  assert(get(2) == 20 && calculated == 4);
-  assert(get(1) == 10 && calculated == 4);
+  assert(cache.Find({2})); // Four-way cache also retains B after introducing C.
+  assert(get(2) == 20 && calculated == 3);
+  assert(get(1) == 10 && calculated == 3);
 
   // A rejected compute must not evict an existing valid raster area.
   try {
@@ -52,11 +52,15 @@ static void TestRasterGetPromotesConsumedEntry() {
   cache.Store({2}, 22);
   assert(cache.Find({1}) && *cache.Find({1}) == 11);
   cache.Store({3}, 33);
-  assert(!cache.Find({1}) && cache.Find({2}) && cache.Find({3}));
+  cache.Store({4}, 44);
+  assert(cache.Find({1}) && cache.Find({2}) && cache.Find({3}) && cache.Find({4}));
+  cache.Store({5}, 55);
+  assert(!cache.Find({1}) && cache.Find({2}) && cache.Find({3}) &&
+         cache.Find({4}) && cache.Find({5}));
   auto copy = cache;
   cache.Reset();
-  assert(!cache.Find({2}) && !cache.Find({3}));
-  assert(copy.Find({2}) && copy.Find({3}));
+  assert(!cache.Find({2}) && !cache.Find({3}) && !cache.Find({5}));
+  assert(copy.Find({2}) && copy.Find({3}) && copy.Find({5}));
 }
 
 struct Image { uint32_t id = 0; };
