@@ -30,11 +30,25 @@ template <typename Image, size_t Capacity = 64>
 class NativeSurfaceLookupCache {
  public:
   Image* Find(const NativeSurfaceLookupKey& key, uint64_t registry_revision) const {
+    // The detailed G925 2.20 phone trace records around 6,800 successful
+    // surface lookups/frame. Color/depth targets often alternate. Probe two
+    // exact, most recently used keys before hashing the 64-entry set cache.
+    // Both lookup paths require the published registry revision and epoch.
+    for (size_t probe = 0; probe < 2; ++probe) {
+      const size_t slot = hot_recent_ ^ probe;
+      const auto& hot = hot_[slot];
+      if (hot.epoch == epoch_ && hot.image &&
+          hot.registry_revision == registry_revision && hot.key == key) {
+        hot_recent_ = slot;
+        return hot.image;
+      }
+    }
     const size_t start = SetIndex(key) * kWays;
     for (size_t way = 0; way < kWays; ++way) {
       const auto& entry = entries_[start + way];
       if (entry.epoch == epoch_ && entry.image &&
           entry.registry_revision == registry_revision && entry.key == key) {
+        Remember(key, registry_revision, entry.image);
         return entry.image;
       }
     }
@@ -52,6 +66,7 @@ class NativeSurfaceLookupCache {
       auto& entry = entries_[start + way];
       if (entry.epoch == epoch_ && entry.image && entry.key == key) {
         entry = {key, registry_revision, image, epoch_};
+        Remember(key, registry_revision, image);
         return;
       }
     }
@@ -60,17 +75,23 @@ class NativeSurfaceLookupCache {
       if (entry.epoch != epoch_ || !entry.image ||
           entry.registry_revision != registry_revision) {
         entry = {key, registry_revision, image, epoch_};
+        Remember(key, registry_revision, image);
         return;
       }
     }
     const size_t victim = size_t(next_victim_[set]++ % kWays);
+    // Eviction must also remove any hot shortcut to the old cache key.
+    // Otherwise an evicted surface pointer could remain externally visible.
+    Forget(entries_[start + victim]);
     entries_[start + victim] = {key, registry_revision, image, epoch_};
+    Remember(key, registry_revision, image);
   }
 
   void Invalidate() {
-    // The registry owns image lifetimes. Invalidating by generation avoids
-    // touching every cache line whenever a surface is released/replaced.
-    // Stale pointers are never dereferenced; wrap-around cannot revive them.
+    // The registry owns image lifetimes. Immediately discard borrowed hot
+    // pointers; generation invalidation keeps the main array O(1).
+    hot_[0].image = nullptr;
+    hot_[1].image = nullptr;
     if (++epoch_ == 0) {
       for (auto& entry : entries_) entry = {};
       next_victim_.fill(0);
@@ -100,6 +121,28 @@ class NativeSurfaceLookupCache {
     Image* image = nullptr;
     uint64_t epoch = 0;
   };
+  // Recorder-local, borrowed pointers; no ownership or cross-frame lifetime.
+  // The hot pair tracks the two latest exact color/depth surface identities.
+  void Remember(const NativeSurfaceLookupKey& key, uint64_t revision, Image* image) const {
+    for (size_t i = 0; i < 2; ++i) {
+      if (hot_[i].image && hot_[i].epoch == epoch_ && hot_[i].key == key) {
+        hot_[i] = {key, revision, image, epoch_};
+        hot_recent_ = i;
+        return;
+      }
+    }
+    hot_recent_ ^= size_t(1);
+    hot_[hot_recent_] = {key, revision, image, epoch_};
+  }
+  void Forget(const Entry& evicted) {
+    if (evicted.epoch != epoch_ || !evicted.image) return;
+    for (auto& entry : hot_) {
+      if (entry.image && entry.epoch == epoch_ && entry.key == evicted.key)
+        entry.image = nullptr;
+    }
+  }
+  mutable std::array<Entry, 2> hot_{};
+  mutable size_t hot_recent_ = 0;
   std::array<Entry, Capacity> entries_{};
   std::array<uint8_t, kSetCount> next_victim_{};
   uint64_t epoch_ = 1;
