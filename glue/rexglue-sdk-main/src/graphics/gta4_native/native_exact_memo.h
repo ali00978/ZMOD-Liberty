@@ -6,76 +6,84 @@
 
 namespace rex::graphics::gta4_native {
 
-// Two exact entries, no hashing or heap allocation. Alternating frame-local
-// raster/constant-allocation identities no longer force recomputation on every
-// other draw. The newest entry is tested first for the common repeated-key
-// case. The caller owns resource lifetime and MUST Reset before replacing
-// backing storage or reusing identities. No cross-frame GPU resource is owned.
+// Four exact entries with a one-comparison MRU hit. Real recording frequently
+// cycles among scene, reflection, depth and presenter raster identities;
+// retaining all four avoids repeated viewport/scissor computation and repeated
+// frame-constant allocation lookups on 3/4-state workloads.
+//
+// No hashing, allocation, GPU ownership or cross-frame reuse. Values never
+// move on a hit: the small index order changes instead of copying raster or
+// mapped-buffer objects. The owner must Reset when its backing storage changes.
 template <typename Key, typename Value>
 class NativeExactMemo {
  public:
   const Value* Find(const Key& key) const {
-    if (entries_[most_recent_].valid && entries_[most_recent_].key == key) {
-      return &entries_[most_recent_].value;
-    }
-    const size_t other = most_recent_ ^ size_t(1);
-    if (entries_[other].valid && entries_[other].key == key) {
-      return &entries_[other].value;
+    for (size_t position = 0; position < kSlots; ++position) {
+      const auto& entry = entries_[order_[position]];
+      if (entry.valid && entry.key == key) return &entry.value;
     }
     return nullptr;
   }
 
   const Value& Store(const Key& key, const Value& value) {
-    // Store of an existing exact identity refreshes that slot, without
-    // destroying the other identity. Misses evict the older slot only.
-    if (!(entries_[most_recent_].valid && entries_[most_recent_].key == key)) {
-      most_recent_ ^= size_t(1);
+    for (size_t position = 0; position < kSlots; ++position) {
+      auto& entry = entries_[order_[position]];
+      if (entry.valid && entry.key == key) {
+        entry.value = value;
+        Promote(position);
+        return entry.value;
+      }
     }
-    Entry& entry = entries_[most_recent_];
+    const size_t victim = order_[kSlots - 1];
+    auto& entry = entries_[victim];
     entry.key = key;
     entry.value = value;
     entry.valid = true;
+    Promote(kSlots - 1);
     return entry.value;
   }
 
-  // Get is the draw-recording hot path. A hit in the older slot becomes
-  // most-recently used, so an occasional third raster state does not evict the
-  // state the recorder just consumed. Find() remains a read-only peek for
-  // callers that do not want to change eviction order.
-  // On a miss, Find()+Store() previously compared the latest large key twice.
-  // Probe both slots once and fill the older slot directly.
+  // Draw hot path: inspect each key at most once, compute only on a miss.
+  // Promote hits, so a rare additional state does not evict a frequently
+  // alternating pair. A cache miss replaces only the least-recently-used slot.
   template <typename Compute>
   const Value& Get(const Key& key, Compute compute) {
-    if (entries_[most_recent_].valid && entries_[most_recent_].key == key)
-      return entries_[most_recent_].value;
-    const size_t other = most_recent_ ^ size_t(1);
-    if (entries_[other].valid && entries_[other].key == key) {
-      most_recent_ = other;
-      return entries_[other].value;
+    for (size_t position = 0; position < kSlots; ++position) {
+      auto& entry = entries_[order_[position]];
+      if (entry.valid && entry.key == key) {
+        Promote(position);
+        return entry.value;
+      }
     }
     Value computed = compute();
-    Entry& entry = entries_[other];
+    const size_t victim = order_[kSlots - 1];
+    auto& entry = entries_[victim];
     entry.value = std::move(computed);
     entry.key = key;
     entry.valid = true;
-    most_recent_ = other;
+    Promote(kSlots - 1);
     return entry.value;
   }
 
   void Reset() {
-    entries_[0].valid = false;
-    entries_[1].valid = false;
-    most_recent_ = 0;
+    for (auto& entry : entries_) entry.valid = false;
+    order_ = {0, 1, 2, 3};
   }
 
  private:
+  static constexpr size_t kSlots = 4;
+  void Promote(size_t position) {
+    const size_t slot = order_[position];
+    for (; position > 0; --position) order_[position] = order_[position - 1];
+    order_[0] = slot;
+  }
   struct Entry {
     Key key{};
     Value value{};
     bool valid = false;
   };
-  std::array<Entry, 2> entries_{};
-  size_t most_recent_ = 0;
+  std::array<Entry, kSlots> entries_{};
+  std::array<size_t, kSlots> order_{0, 1, 2, 3};
 };
 
 }  // namespace rex::graphics::gta4_native
