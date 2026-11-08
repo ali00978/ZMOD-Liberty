@@ -58,7 +58,7 @@ android {
         versionCode   = 52
         // Shown as e.g. 0.5.9.3-mali-alpha-1.5. The workflow reads both the
         // base version and versionSuffix to name the APK.
-        val versionSuffix = "-alpha-2.23-g925-no-fragment-draws"
+        val versionSuffix = "-alpha-2.24-g925-real-draw-merge"
         versionName   = "0.5.9.3" + (if (libertyGpu == "mali") "-mali" else "") + versionSuffix
 
         // Read by DriverBridge.defaultMode(): the driver used when driver.txt
