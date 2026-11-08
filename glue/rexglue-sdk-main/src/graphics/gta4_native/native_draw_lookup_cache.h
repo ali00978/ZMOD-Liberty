@@ -37,6 +37,12 @@ class NativeSurfaceLookupCache {
     for (size_t probe = 0; probe < 2; ++probe) {
       const size_t slot = hot_recent_ ^ probe;
       const auto& hot = hot_[slot];
+      // A color/depth switch usually changes the handle or role. Reject
+      // that candidate before comparing its full nine-word descriptor.
+      // A matching short identity is never sufficient to reuse an image:
+      // the exact full key, epoch and registry revision remain mandatory.
+      if (hot.key.descriptor[0] != key.descriptor[0] ||
+          hot.key.depth != key.depth || hot.key.samples != key.samples) continue;
       if (hot.epoch == epoch_ && hot.image &&
           hot.registry_revision == registry_revision && hot.key == key) {
         hot_recent_ = slot;
