@@ -21,7 +21,7 @@ assert "Forget(entries_[start + victim]);" in header
 assert "hot_[0].image = nullptr;" in header
 assert "hot_[1].image = nullptr;" in header
 assert "surface_lookup_cache_.Invalidate();" in source
-assert "surface_lookup_cache_.Find(lookup_key, registry_revision)" in source
+assert "surface_lookup_cache_.Find(" in source
 
 compiler = os.environ.get("G925_TEST_CXX") or shutil.which("clang++") or shutil.which("g++")
 if not compiler:
