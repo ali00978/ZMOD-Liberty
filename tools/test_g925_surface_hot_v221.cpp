@@ -55,6 +55,29 @@ static void TestAlternatingHotLookup() {
   assert(!cache.Find(a, 2));
 }
 
+static void TestFourSurfaceHotSet() {
+  NativeSurfaceLookupCache<Image, 256> cache;
+  Image images[5]{{1}, {2}, {3}, {4}, {5}};
+  std::array<NativeSurfaceLookupKey, 5> keys;
+  for (size_t i = 0; i < keys.size(); ++i) {
+    keys[i] = Key(800 + uint32_t(i * 59), 4 + uint32_t(i));
+    keys[i].depth = i % 2 == 1;
+  }
+  for (size_t i = 0; i < 4; ++i) cache.Store(keys[i], 42, &images[i]);
+  // Four active surface types must be retained exactly; in particular no
+  // stale image may be read after a new registry revision or an epoch reset.
+  for (size_t repeat = 0; repeat < 10000; ++repeat)
+    for (size_t i = 0; i < 4; ++i)
+      assert(cache.Find(keys[i], 42) == &images[i]);
+  cache.Store(keys[4], 42, &images[4]);
+  assert(cache.Find(keys[4], 42) == &images[4]);
+  for (size_t i = 1; i < 4; ++i)
+    assert(cache.Find(keys[i], 42) == &images[i]);
+  assert(cache.Find(keys[0], 43) == nullptr);
+  cache.Invalidate();
+  for (const auto& key : keys) assert(!cache.Find(key, 42));
+}
+
 static void TestHotCacheEvictionAndCollision() {
   // A one-way cache is intentionally incompatible with multiple identities.
   // The two-entry hot cache must NOT expose a victim evicted from its single
@@ -113,6 +136,7 @@ static void TestChurnAndEpochSafety() {
 
 int main() {
   TestAlternatingHotLookup();
+  TestFourSurfaceHotSet();
   TestHotCacheEvictionAndCollision();
   TestChurnAndEpochSafety();
   std::cout << "PASS: 200000 alternating color/depth hot hits, exact revision, "
