@@ -1,4 +1,5 @@
 // Host-only G925 2.24 rectangle list Vulkan draw-elision proof.
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cstdint>
