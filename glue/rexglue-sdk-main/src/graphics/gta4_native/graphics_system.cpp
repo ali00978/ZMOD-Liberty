@@ -21872,7 +21872,7 @@ void Gta4NativeGraphicsSystem::TryPrewarmDrawPipeline(const NativeCommand& comma
       // Prewarm the same restart-enabled strip pipeline selected by the
       // renderer when a RectangleList has two or more rectangles to merge.
       primitive_restart_enable =
-          REXCVAR_GET(gta4_native_merge_rectangle_draws) && !target.temporal_shader &&
+          REXCVAR_GET(gta4_native_merge_rectangle_draws) &&
           command.pipeline_state && command.pipeline_state->vertex_shader_resource &&
           !command.pipeline_state->vertex_shader_resource->uses_vertex_index &&
           draw.primitive_type == uint32_t(xenos::PrimitiveType::kRectangleList) &&
