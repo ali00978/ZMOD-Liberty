@@ -164,6 +164,7 @@ jobs:
           python tools/test_g925_zero_coverage_v223.py
           python tools/test_g925_rectangle_batch_v224.py
           python tools/test_g925_index_upload_v29.py
+          python tools/test_g925_single_pass_index_v225.py
           python tools/test_g925_present_overlap_v212.py
           python tools/test_g925_profile_report_v27.py
 
