@@ -361,6 +361,9 @@ REXCVAR_DEFINE_BOOL(gta4_native_merge_indexed_draws, true, "GTA IV/Graphics/Nati
 REXCVAR_DEFINE_BOOL(gta4_native_merge_sequential_draws, true, "GTA IV/Graphics/Native Renderer",
                     "Merge consecutive nonindexed triangle-list draws that read exactly adjacent "
                     "vertex ranges with the same immutable shader, resources and render state");
+REXCVAR_DEFINE_BOOL(gta4_native_merge_rectangle_draws, true, "GTA IV/Graphics/Native Renderer",
+                    "Draw multiple native Xenos RectangleList strips with one indexed Vulkan "
+                    "primitive-restart draw when vertex-index shaders and special paths are absent");
 REXCVAR_DEFINE_DOUBLE(gta4_native_depth_bias_constant_scale, 1.0, "GTA IV/Graphics/Native Renderer",
                       "Multiplier on the converted constant depth bias (diagnostics)");
 REXCVAR_DEFINE_DOUBLE(gta4_native_depth_bias_slope_scale, 1.0, "GTA IV/Graphics/Native Renderer",
@@ -21869,6 +21872,9 @@ void Gta4NativeGraphicsSystem::TryPrewarmDrawPipeline(const NativeCommand& comma
       // Prewarm the same restart-enabled strip pipeline selected by the
       // renderer when a RectangleList has two or more rectangles to merge.
       primitive_restart_enable =
+          REXCVAR_GET(gta4_native_merge_rectangle_draws) && !target.temporal_shader &&
+          command.pipeline_state && command.pipeline_state->vertex_shader_resource &&
+          !command.pipeline_state->vertex_shader_resource->uses_vertex_index &&
           draw.primitive_type == uint32_t(xenos::PrimitiveType::kRectangleList) &&
           draw.vertex_count >= 6 && draw.vertex_count % 3 == 0 &&
           NativeRectangleStripIndexCount(draw.vertex_count / 3) != 0;
@@ -24083,6 +24089,9 @@ bool Gta4NativeGraphicsSystem::RecordPrimitiveUp(VkCommandBuffer command_buffer,
   // vkCmdDraw(4). With strip-restart, the exact same triangles become ONE
   // vkCmdDrawIndexed without dropping or reordering any visible geometry.
   bool merge_rectangles =
+      REXCVAR_GET(gta4_native_merge_rectangle_draws) && !target.temporal_shader &&
+      command.pipeline_state->vertex_shader_resource &&
+      !command.pipeline_state->vertex_shader_resource->uses_vertex_index &&
       draw.primitive_type == uint32_t(xenos::PrimitiveType::kRectangleList) &&
       draw.vertex_count >= 6 && draw.vertex_count % 3 == 0 &&
       NativeRectangleStripIndexCount(draw.vertex_count / 3) != 0;
@@ -24260,6 +24269,7 @@ bool Gta4NativeGraphicsSystem::RecordPrimitiveUp(VkCommandBuffer command_buffer,
       return fail("rectangle-list-layout");
     }
     const uint32_t rectangle_count = draw.vertex_count / 3;
+    if (rectangle_count > UINT32_MAX / 4) return fail("rectangle-count-overflow");
     host_vertex_count = rectangle_count * 4;
     const uint64_t expanded_size = uint64_t(host_vertex_count) * uint64_t(draw.stride);
     if (!expanded_size || expanded_size > kMaximumUpPayloadSize) {
