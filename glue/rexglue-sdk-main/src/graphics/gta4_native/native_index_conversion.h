@@ -85,28 +85,28 @@ inline bool WriteNativeConvertedIndices(std::span<const uint8_t> source,
       dst += 6 * element;
     }
   } else {
-    // Copy unchanged host-endian index data in one bulk operation. A masked
-    // restart index is usually rare; patch only matching markers instead of
-    // issuing an individual write and a width branch for every element.
-    // memcpy on each word keeps unaligned input/output legal on all hosts.
+    // Masked restart conversion is a genuine transformation. Previously it
+    // copied the entire range, then reread every source index looking for
+    // restart markers. Do exactly one load and one store per index instead.
+    // Fixed-width memcpy keeps input and mapped upload destinations unaligned
+    // and alias-safe as required by the non-overlap contract.
     const uint8_t* src = source.data() + size_t(key.first) * element;
     uint8_t* dst = destination.data();
-    std::memcpy(dst, src, size_t(key.count) * element);
     if (key.index32) {
-      constexpr uint32_t kRestart32 = UINT32_MAX;
       for (uint32_t i = 0; i < key.count; ++i) {
         uint32_t value;
-        std::memcpy(&value, src + size_t(i) * sizeof(uint32_t), sizeof(value));
+        std::memcpy(&value, src + size_t(i) * sizeof(value), sizeof(value));
         if ((value & key.index_mask) == key.restart_index)
-          std::memcpy(dst + size_t(i) * sizeof(uint32_t), &kRestart32, sizeof(kRestart32));
+          value = UINT32_MAX;
+        std::memcpy(dst + size_t(i) * sizeof(value), &value, sizeof(value));
       }
     } else {
-      constexpr uint16_t kRestart16 = UINT16_MAX;
       for (uint32_t i = 0; i < key.count; ++i) {
         uint16_t value;
-        std::memcpy(&value, src + size_t(i) * sizeof(uint16_t), sizeof(value));
+        std::memcpy(&value, src + size_t(i) * sizeof(value), sizeof(value));
         if (value == key.restart_index)
-          std::memcpy(dst + size_t(i) * sizeof(uint16_t), &kRestart16, sizeof(kRestart16));
+          value = UINT16_MAX;
+        std::memcpy(dst + size_t(i) * sizeof(value), &value, sizeof(value));
       }
     }
   }
