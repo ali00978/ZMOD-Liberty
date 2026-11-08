@@ -8,6 +8,7 @@
 #include <span>
 #include <vector>
 #include "graphics/gta4_native/native_rectangle_batch.h"
+#include "graphics/gta4_native/native_sequential_draw_merge.h"
 
 using namespace rex::graphics::gta4_native;
 
@@ -54,7 +55,41 @@ static std::vector<std::array<uint32_t, 3>> OriginalSeparateStrips(uint32_t rect
   return reference;
 }
 
+static void TestConsecutiveTriangleDraws() {
+  assert(CanExtendNativeSequentialTriangleList(0, 3, 3, 6));
+  assert(CanExtendNativeSequentialTriangleList(27, 90, 117, 18));
+  assert(!CanExtendNativeSequentialTriangleList(27, 90, 118, 18)); // gap
+  assert(!CanExtendNativeSequentialTriangleList(27, 90, 116, 18)); // overlap
+  assert(!CanExtendNativeSequentialTriangleList(0, 2, 2, 3)); // incomplete triangle
+  assert(!CanExtendNativeSequentialTriangleList(0, 3, 3, 4)); // split next triangle
+  assert(!CanExtendNativeSequentialTriangleList(0, 0, 0, 3));
+  assert(!CanExtendNativeSequentialTriangleList(0, 3, 3, 0));
+  assert(!CanExtendNativeSequentialTriangleList(UINT32_MAX - 5, 3, UINT32_MAX - 2, 3));
+  assert(!CanExtendNativeSequentialTriangleList(UINT32_MAX - 3, 3, UINT32_MAX, 3));
+  // Every original triangle and its order must be identical after merging
+  // adjacent triangle-list vertex ranges; no new geometry is introduced.
+  for (uint32_t start = 0; start < 512; ++start) {
+    for (uint32_t run = 2; run <= 32; ++run) {
+      std::vector<uint32_t> individual, merged;
+      uint32_t cursor = start, total = 0;
+      for (uint32_t i = 0; i < run; ++i) {
+        uint32_t count = 3 * ((i * 31 + start * 7) % 23 + 1);
+        if (i) assert(CanExtendNativeSequentialTriangleList(start, total, cursor, count));
+        for (uint32_t vertex = cursor; vertex < cursor + count; ++vertex)
+          individual.push_back(vertex);
+        cursor += count;
+        total += count;
+      }
+      for (uint32_t vertex = start; vertex < start + total; ++vertex)
+        merged.push_back(vertex);
+      assert(individual == merged);
+      assert(individual.size() % 3 == 0);
+    }
+  }
+}
+
 int main() {
+  TestConsecutiveTriangleDraws();
   assert(!NativeRectangleStripIndexCount(0));
   assert(NativeRectangleStripIndexCount(1) == 4);
   assert(NativeRectangleStripIndexCount(2) == 9);
@@ -84,6 +119,6 @@ int main() {
         assert(vertex < count * 4);
     assert(std::count(exact.begin(), exact.end(), kNativeRectangleRestartIndex) == count - 1);
   }
-  std::cout << "PASS: 1024 rectangle scenes preserve exact triangle order and winding, "
+  std::cout << "PASS: 1024 rectangle scenes and 15872 sequential triangle runs preserve exact geometry, "
                "valid restart separation, overflow, failed-write and bounds guards\n";
 }
