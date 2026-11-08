@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run v2.15 production CPU-cache tests on the CI host, no phone needed."""
+"""Run production exact CPU-cache tests (four-way MRU) on the CI host."""
 from pathlib import Path
 import os
 import shutil
@@ -11,8 +11,8 @@ sdk = root / "glue/rexglue-sdk-main"
 exact = (sdk / "src/graphics/gta4_native/native_exact_memo.h").read_text()
 vertex = (sdk / "src/graphics/gta4_native/native_draw_lookup_cache.h").read_text()
 resolve = (sdk / "src/graphics/gta4_native/native_resolve_descriptor_cache.h").read_text()
-assert "std::array<Entry, 2> entries_" in exact
-assert "Entry recent_" in vertex and "Entry previous_" in vertex
+assert "std::array<Entry, kSlots> entries_" in exact
+assert "mutable std::array<size_t, kSlots> order_" in vertex
 assert "entries_.erase(entries_.begin())" in resolve
 assert "entries_.reserve(kCapacity)" in resolve
 assert "entries_.size() >= kCapacity) entries_.clear()" not in resolve
@@ -30,4 +30,4 @@ with tempfile.TemporaryDirectory(prefix="g925-memo-resolve-") as directory:
         command[2:2] = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
     subprocess.run(command, check=True)
     subprocess.run([str(executable)], check=True, timeout=20)
-print("PASS: production two-way CPU memos and bounded resolve descriptor pool")
+print("PASS: four-way exact CPU memos and bounded resolve descriptor pool")
