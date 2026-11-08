@@ -150,6 +150,7 @@ inline T RexRelaxedLoad(T& target) {
 #include "native_stencil_volume_policy.h"
 #include "native_zero_coverage_draw.h"
 #include "native_rectangle_batch.h"
+#include "native_sequential_draw_merge.h"
 #include "hdr_present_ps.h"
 #include "native_msaa_policy.h"
 #include "native_resolve_policy.h"
@@ -357,6 +358,9 @@ REXCVAR_DEFINE_UINT32(gta4_native_debug_gpu_attribution, 0, "GTA IV/Graphics/Nat
 REXCVAR_DEFINE_BOOL(gta4_native_merge_indexed_draws, true, "GTA IV/Graphics/Native Renderer",
                     "Record consecutive indexed triangle-list draws with identical state and "
                     "adjacent index ranges as one draw");
+REXCVAR_DEFINE_BOOL(gta4_native_merge_sequential_draws, true, "GTA IV/Graphics/Native Renderer",
+                    "Merge consecutive nonindexed triangle-list draws that read exactly adjacent "
+                    "vertex ranges with the same immutable shader, resources and render state");
 REXCVAR_DEFINE_DOUBLE(gta4_native_depth_bias_constant_scale, 1.0, "GTA IV/Graphics/Native Renderer",
                       "Multiplier on the converted constant depth bias (diagnostics)");
 REXCVAR_DEFINE_DOUBLE(gta4_native_depth_bias_slope_scale, 1.0, "GTA IV/Graphics/Native Renderer",
@@ -24492,6 +24496,7 @@ bool Gta4NativeGraphicsSystem::RecordPrimitive(VkCommandBuffer command_buffer,
   }
   DrawPrimitiveCommand draw{};
   std::memcpy(&draw, command.bytes.data(), sizeof(draw));
+  if (primitive_merge_count_override_) draw.vertex_count = primitive_merge_count_override_;
   if (!draw.vertex_count) {
     return fail("zero-count");
   }
@@ -36357,8 +36362,74 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
       AddNativeGpuProfileCounter(performance::Counter::kZeroCoverageDrawSkips);
       command_recorded = true;
     } else if (command.type == CommandType::kDrawPrimitive) {
+      // Normal indexed merging already eliminates adjacent-index draws.
+      // The nonindexed triangle-list equivalent can do the same without
+      // copying vertex data: all vertices are already consecutive in one
+      // immutable resource, and triangle boundaries must not be crossed.
+      size_t merged_count = 1;
+      uint32_t merged_vertices = 0;
+      if (REXCVAR_GET(gta4_native_merge_sequential_draws) && &command == &queued_command &&
+          !diagnostic_frame && !legacy_diagnostics && !target.temporal_shader &&
+          !command.fire_trace && !command.bulb_trace && !command.phone_trace &&
+          !command.tv_trace && !command.temporal_scene_binding && !command.temporal_instance &&
+          command.pipeline_state && command.shader_state &&
+          command.pipeline_state->vertex_shader_resource &&
+          !command.pipeline_state->vertex_shader_resource->uses_vertex_index &&
+          fire_query == UINT32_MAX) {
+        DrawPrimitiveCommand head{};
+        std::memcpy(&head, command.bytes.data(), sizeof(head));
+        if (head.primitive_type == uint32_t(xenos::PrimitiveType::kTriangleList) &&
+            head.vertex_count >= 3 && head.vertex_count % 3 == 0) {
+          merged_vertices = head.vertex_count;
+          for (size_t next = command_index + 1; next < current_frame_.size() &&
+               merged_count < 64; ++next) {
+            const NativeCommand& other = current_frame_[next];
+            if (other.type != CommandType::kDrawPrimitive || other.fire_trace ||
+                other.bulb_trace || other.phone_trace || other.tv_trace ||
+                other.temporal_scene_binding || other.temporal_instance) break;
+            DrawPrimitiveCommand next_draw{};
+            std::memcpy(&next_draw, other.bytes.data(), sizeof(next_draw));
+            if (next_draw.primitive_type != head.primitive_type ||
+                !CanExtendNativeSequentialTriangleList(
+                    head.start_vertex, merged_vertices, next_draw.start_vertex,
+                    next_draw.vertex_count)) break;
+            if (other.pipeline_state != command.pipeline_state ||
+                other.shader_state != command.shader_state ||
+                other.vertex_buffers != command.vertex_buffers ||
+                other.textures != command.textures ||
+                other.render_phase != command.render_phase ||
+                other.used_texture_mask != command.used_texture_mask ||
+                other.descriptor_page != command.descriptor_page ||
+                other.texture_descriptor_indices != command.texture_descriptor_indices ||
+                other.sampler_descriptor_indices != command.sampler_descriptor_indices ||
+                other.captured_vertex_constants_hash != command.captured_vertex_constants_hash ||
+                other.captured_pixel_constants_hash != command.captured_pixel_constants_hash ||
+                std::memcmp(&other.lighting, &command.lighting, sizeof(command.lighting)) != 0 ||
+                std::memcmp(&other.texture_fetches, &command.texture_fetches,
+                            sizeof(command.texture_fetches)) != 0 ||
+                std::memcmp(&other.fixed_function_state, &command.fixed_function_state,
+                            sizeof(command.fixed_function_state)) != 0) break;
+            merged_vertices += next_draw.vertex_count;
+            ++merged_count;
+          }
+        }
+      }
+      if (merged_count > 1) primitive_merge_count_override_ = merged_vertices;
       command_recorded =
           RecordPrimitive(command_buffer, command, target.width, target.height, target, resources);
+      primitive_merge_count_override_ = 0;
+      if (merged_count > 1) {
+        if (command_recorded) {
+          merged_up_until = command_index + merged_count;
+          AddNativeGpuProfileCounter(performance::Counter::kSequentialDrawsMerged,
+                                    merged_count - 1);
+        } else {
+          // Do not discard any originally valid draw if the larger range
+          // cannot be bound or recorded; remaining draws stay in the stream.
+          command_recorded = RecordPrimitive(command_buffer, command, target.width,
+                                             target.height, target, resources);
+        }
+      }
       trace_deferred_light_draw(command_recorded);
       if (collect_frame_diagnostics) {
         command_recorded ? ++successful_draws : ++failed_draws;
