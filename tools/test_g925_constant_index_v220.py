@@ -20,7 +20,7 @@ assert "reservations_.Find(identity)" not in arena
 assert "reservations_.Insert(identity," not in arena
 assert "if (insertion.inserted) byte_cursor_" in arena
 assert "stored.byte_size != byte_size" in arena
-assert "std::memcpy(dst, src, size_t(key.count) * element);" in indices
+assert "std::memcpy(dst + size_t(i) * sizeof(value), &value, sizeof(value));" in indices
 assert "if ((value & key.index_mask) == key.restart_index)" in indices
 assert "if (value == key.restart_index)" in indices
 
