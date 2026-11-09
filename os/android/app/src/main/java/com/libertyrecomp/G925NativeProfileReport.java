@@ -53,6 +53,8 @@ final class G925NativeProfileReport {
         {"android_performance_hint_report_interval_ms", "CPU feedback interval (ms)"},
         {"android_performance_hint_stable_threads", "Stable CPU hint threads"},
         {"gta4_frame_limit", "Launcher frame cap"},
+        {"gta4_extra_frames_in_flight", "Additional guest run-ahead frames"},
+        {"gta4_native_max_queued_frames", "Native guest frame queue limit"},
         {"gta4_output_height_cap", "Launcher output height"},
         {"gta4_native_anti_aliasing", "Launcher anti-aliasing"},
         {"gta4_draw_distance_scale", "Draw distance scale"},
