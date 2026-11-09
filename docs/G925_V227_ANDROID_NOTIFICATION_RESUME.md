@@ -19,7 +19,13 @@ The existing v2.26 workload optimizations do not address this focus/lifecycle pa
    only when `surface_detached_` is true **and** there is a valid native
    window. No unconditional swapchain rebuild on notification arrival,
    no new GPU fences or waits, and no change to graphics quality.
-2. In `AudioSystem::WorkerThreadMain`, a 500ms timed semaphore wait was
+2. When a notification causes FOCUS_GAINED **without detaching the native
+   surface**, the Android UI thread also requests a presentation-timeline
+   resync. An atomic flag is consumed only by the exclusive
+   `Presenter::PaintAndPresent` owner, preventing a race with the guest
+   output painter. This resets stale phase observations without recreating
+   a healthy swapchain or forcing a GPU wait.
+3. In `AudioSystem::WorkerThreadMain`, a 500ms timed semaphore wait was
    followed by an extra 500ms sleep on timeout. If SDL playback stopped
    supplying audio callbacks during a notification transition, that extra
    sleep delayed recognition of newly available credits even after Android
@@ -29,9 +35,8 @@ The existing v2.26 workload optimizations do not address this focus/lifecycle pa
 
 ## Validation
 
-`tools/test_g925_notification_resume_v227.py` asserts the actual SDL window
-lifecycle event integration and its guarded reattachment, and the actual
-audio worker's timeout/wakeup behavior. The test is mandatory in full native
+`tools/test_g925_notification_resume_v227.py` asserts the actual SDL window lifecycle event integration, guarded reattachment,
+atomic paint-owner frame phase reset, and the audio worker's timeout/wakeup behavior. The test is mandatory in full native
 APK CI, together with all older C++/Java regressions.
 
 This addresses two real recovery vulnerabilities, but **is not proof** that
