@@ -36546,24 +36546,52 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
         command_recorded ? ++successful_draws : ++failed_draws;
       }
     } else if (command.type == CommandType::kDrawIndexedPrimitive) {
-      // Consecutive triangle-list draws of one mesh with identical state whose
-      // index ranges continue each other are the same work as one draw over
-      // the joined range: record them as one.
+      // First prefer the original zero-copy merge of adjacent index ranges.
+      // Sparse opaque runs can instead repack discontiguous index spans into
+      // ONE actual Vulkan indexed draw, preserving all index words and order.
       size_t merged_count = 1;
       uint32_t merged_indices = 0;
+      size_t sparse_count = 0;
+      uint32_t sparse_indices = 0;
+      bool sparse_has_gap = false;
+      bool sparse_allowed = false;
       if (REXCVAR_GET(gta4_native_merge_indexed_draws) && &command == &queued_command &&
-          !diagnostic_frame && !legacy_diagnostics && !command.fire_trace && !command.bulb_trace &&
-          !command.phone_trace && !command.tv_trace && !command.temporal_scene_binding &&
-          !command.temporal_instance && command.pipeline_state && command.shader_state &&
-          command.index_buffer && fire_query == UINT32_MAX) {
+          !diagnostic_frame && !legacy_diagnostics && !command.fire_trace &&
+          !command.bulb_trace && !command.phone_trace && !command.tv_trace &&
+          !command.temporal_scene_binding && !command.temporal_instance &&
+          command.pipeline_state && command.shader_state && command.index_buffer &&
+          fire_query == UINT32_MAX) {
         DrawIndexedPrimitiveCommand head{};
         std::memcpy(&head, command.bytes.data(), sizeof(head));
         if (head.primitive_type == uint32_t(xenos::PrimitiveType::kTriangleList) &&
             head.index_count) {
           merged_indices = head.index_count;
-          uint32_t next_start = head.start_index + head.index_count;
-          for (size_t next = command_index + 1; next < current_frame_.size() && merged_count < 64;
-               ++next) {
+          const uint64_t source_indices = command.index_buffer->payload.size() /
+              ((command.index_buffer->flags & kIndex32Flag) ? sizeof(uint32_t) :
+                                                             sizeof(uint16_t));
+          sparse_allowed = REXCVAR_GET(gta4_native_merge_sparse_indexed_draws) &&
+              !diagnostic_variants_enabled && !force_content_probe &&
+              !collect_frame_diagnostics && !target.temporal_shader &&
+              !command.light_trace_id && !command.temporal_composite_mode &&
+              !command.temporal_prefilter && !command.fixed_function_state.blend_enable &&
+              !command.fixed_function_state.stencil_enable &&
+              !REXCVAR_GET(gta4_native_gpu_breadcrumbs) &&
+              !REXCVAR_GET(gta4_native_debug_gpu_attribution) &&
+              !NativeRendererEventTraceEnabled() && !IsArtificialLightTraceEnabled() &&
+              translucent_query_index == UINT32_MAX && water_query_index == UINT32_MAX &&
+              command.pipeline_state->vertex_shader_resource &&
+              !command.pipeline_state->vertex_shader_resource->uses_vertex_index &&
+              head.index_count >= 3 && head.index_count % 3 == 0 &&
+              head.index_count <= kNativeSparseIndexBatchMaxIndices &&
+              uint64_t(head.start_index) + head.index_count <= source_indices;
+          if (sparse_allowed) {
+            sparse_indexed_ranges_[0] = {head.start_index, head.index_count};
+            sparse_count = 1;
+            sparse_indices = head.index_count;
+          }
+          uint64_t next_start = uint64_t(head.start_index) + head.index_count;
+          for (size_t next = command_index + 1;
+               next < current_frame_.size() && next - command_index < 64; ++next) {
             const NativeCommand& other = current_frame_[next];
             if (other.type != CommandType::kDrawIndexedPrimitive || other.fire_trace ||
                 other.bulb_trace || other.phone_trace || other.tv_trace ||
@@ -36584,34 +36612,89 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
                 std::memcmp(&other.texture_fetches, &command.texture_fetches,
                             sizeof(command.texture_fetches)) != 0 ||
                 std::memcmp(&other.fixed_function_state, &command.fixed_function_state,
-                            sizeof(command.fixed_function_state)) != 0) {
-              break;
-            }
+                            sizeof(command.fixed_function_state)) != 0) break;
             DrawIndexedPrimitiveCommand draw{};
             std::memcpy(&draw, other.bytes.data(), sizeof(draw));
-            if (draw.primitive_type != head.primitive_type || draw.base_vertex != head.base_vertex ||
-                draw.start_index != next_start || !draw.index_count ||
-                merged_indices > UINT32_MAX - draw.index_count) {
+            if (draw.primitive_type != head.primitive_type ||
+                draw.base_vertex != head.base_vertex || !draw.index_count)
+              break;
+            const bool adjacent = uint64_t(draw.start_index) == next_start;
+            // Keep original contiguous merge semantics even if a candidate
+            // is rejected for the stricter sparse path.
+            if (sparse_allowed) {
+              const bool state_ok =
+                  !other.light_trace_id && !other.temporal_composite_mode &&
+                  !other.temporal_prefilter &&
+                  other.render_phase_object == command.render_phase_object &&
+                  other.failed_texture_mask == command.failed_texture_mask &&
+                  other.descriptor_copy == command.descriptor_copy &&
+                  other.image_descriptor_epoch == command.image_descriptor_epoch &&
+                  other.sampler_descriptor_epoch == command.sampler_descriptor_epoch &&
+                  other.draw_descriptor_sets == command.draw_descriptor_sets &&
+                  other.environmental_data == command.environmental_data &&
+                  other.environmental_data_hash == command.environmental_data_hash &&
+                  other.worker_ring_serial == command.worker_ring_serial &&
+                  other.worker_vertex_constants_offset ==
+                      command.worker_vertex_constants_offset &&
+                  other.worker_pixel_constants_offset ==
+                      command.worker_pixel_constants_offset;
+              const bool range_ok =
+                  draw.index_count >= 3 && draw.index_count % 3 == 0 &&
+                  uint64_t(draw.start_index) + draw.index_count <= source_indices &&
+                  draw.index_count <= kNativeSparseIndexBatchMaxIndices - sparse_indices;
+              if (!state_ok || !range_ok) {
+                sparse_allowed = false;
+                if (!adjacent) break;
+              } else {
+                sparse_has_gap |= !adjacent;
+                sparse_indexed_ranges_[sparse_count++] = {draw.start_index, draw.index_count};
+                sparse_indices += draw.index_count;
+              }
+            }
+            if (adjacent && !sparse_has_gap) {
+              if (merged_indices > UINT32_MAX - draw.index_count) break;
+              merged_indices += draw.index_count;
+              ++merged_count;
+            } else if (!sparse_allowed) {
               break;
             }
-            merged_indices += draw.index_count;
-            next_start += draw.index_count;
-            ++merged_count;
+            next_start = uint64_t(draw.start_index) + draw.index_count;
           }
         }
       }
-      if (merged_count > 1) indexed_merge_count_override_ = merged_indices;
-      command_recorded = RecordIndexedPrimitive(command_buffer, command, target.width,
-                                                target.height, target, resources);
-      indexed_merge_count_override_ = 0;
-      if (merged_count > 1) {
+      const bool use_sparse_batch =
+          sparse_allowed && sparse_has_gap && sparse_count >= 4 &&
+          sparse_count >= merged_count + 2;
+      if (use_sparse_batch) {
+        sparse_indexed_range_count_ = uint32_t(sparse_count);
+        command_recorded = RecordIndexedPrimitive(command_buffer, command, target.width,
+                                                  target.height, target, resources);
+        sparse_indexed_range_count_ = 0;
         if (command_recorded) {
-          merged_up_until = command_index + merged_count;
-          g_indexed_draws_merged.fetch_add(merged_count - 1, std::memory_order_relaxed);
+          merged_up_until = command_index + sparse_count;
+          AddNativeGpuProfileCounter(performance::Counter::kSparseIndexedDrawsMerged,
+                                     sparse_count - 1);
+          g_indexed_draws_merged.fetch_add(sparse_count - 1, std::memory_order_relaxed);
         } else {
-          // Fall back to the first draw alone; the rest record normally.
+          // Upload/capacity failure restores the untouched first original
+          // draw; every following guest draw remains in the command queue.
           command_recorded = RecordIndexedPrimitive(command_buffer, command, target.width,
                                                     target.height, target, resources);
+        }
+      } else {
+        if (merged_count > 1) indexed_merge_count_override_ = merged_indices;
+        command_recorded = RecordIndexedPrimitive(command_buffer, command, target.width,
+                                                  target.height, target, resources);
+        indexed_merge_count_override_ = 0;
+        if (merged_count > 1) {
+          if (command_recorded) {
+            merged_up_until = command_index + merged_count;
+            g_indexed_draws_merged.fetch_add(merged_count - 1, std::memory_order_relaxed);
+          } else {
+            // Fallback: record the first unmodified guest draw if merging fails.
+            command_recorded = RecordIndexedPrimitive(command_buffer, command, target.width,
+                                                      target.height, target, resources);
+          }
         }
       }
       trace_deferred_light_draw(command_recorded);
