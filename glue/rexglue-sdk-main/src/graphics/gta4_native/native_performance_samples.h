@@ -159,6 +159,7 @@ enum class Counter : uint8_t {
   kZeroCoverageDrawSkips,
   kRectangleDrawsMerged,
   kSequentialDrawsMerged,
+  kSparseIndexedDrawsMerged,
   kCount,
 };
 
