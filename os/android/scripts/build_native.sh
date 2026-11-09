@@ -4,10 +4,12 @@
 #                      libSDL3*.so, libc++_shared.so
 #   assets/Resources   fonts, button prompts and the RPF key
 #
-# usage: build_native.sh [jobs]      (default: number of CPUs - 2)
+# usage: build_native.sh [jobs]      (default: number of CPUs - 1, at least 1)
+# A GitHub Windows 4-vCPU runner previously built with only 2 jobs. Reserve
+# one CPU for the OS / compiler cache while compiling three independent units.
 set -euo pipefail
 . "$(dirname "$0")/env.sh"
-JOBS="${1:-$(( $(nproc) > 3 ? $(nproc) - 2 : 1 ))}"
+JOBS="${1:-$(( $(nproc) > 2 ? $(nproc) - 1 : 1 ))}"
 
 [ -d "$ANDROID_NDK" ] || { echo "no NDK at $ANDROID_NDK"; exit 1; }
 
