@@ -358,6 +358,10 @@ REXCVAR_DEFINE_UINT32(gta4_native_debug_gpu_attribution, 0, "GTA IV/Graphics/Nat
 REXCVAR_DEFINE_BOOL(gta4_native_merge_indexed_draws, true, "GTA IV/Graphics/Native Renderer",
                     "Record consecutive indexed triangle-list draws with identical state and "
                     "adjacent index ranges as one draw");
+REXCVAR_DEFINE_BOOL(gta4_native_merge_sparse_indexed_draws, true,
+                    "GTA IV/Graphics/Native Renderer",
+                    "Batch 4+ nonadjacent opaque triangle-list draws with identical state "
+                    "as one indexed Vulkan draw using byte-identical index ranges");
 REXCVAR_DEFINE_BOOL(gta4_native_merge_sequential_draws, true, "GTA IV/Graphics/Native Renderer",
                     "Merge consecutive nonindexed triangle-list draws that read exactly adjacent "
                     "vertex ranges with the same immutable shader, resources and render state");
@@ -24656,9 +24660,14 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
   if (!command.pipeline_state || !command.index_buffer || !command.shader_state) {
     return fail("command-state-or-index");
   }
+  const bool sparse_batch = sparse_indexed_range_count_ >= 4;
   DrawIndexedPrimitiveCommand draw{};
   std::memcpy(&draw, command.bytes.data(), sizeof(draw));
-  if (indexed_merge_count_override_) draw.index_count = indexed_merge_count_override_;
+  if (indexed_merge_count_override_ && !sparse_batch)
+    draw.index_count = indexed_merge_count_override_;
+  if (sparse_batch &&
+      draw.primitive_type != uint32_t(xenos::PrimitiveType::kTriangleList))
+    return fail("sparse-primitive-type");
   if (!draw.index_count) {
     return fail("zero-index-count");
   }
@@ -24745,7 +24754,28 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
   uint32_t host_start_index = draw.start_index;
   VkBuffer host_index_buffer = VK_NULL_HANDLE;
   VkDeviceSize host_index_offset = 0;
-  if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kTriangleFan)) {
+  if (sparse_batch) {
+    const std::span<const NativeSparseIndexRange> ranges(
+        sparse_indexed_ranges_.data(), sparse_indexed_range_count_);
+    const uint32_t total = NativeSparseTriangleIndexCount(
+        ranges, command.index_buffer->payload.size() / element_size);
+    if (!total || !NativeSparseTriangleBatchHasGap(ranges))
+      return fail("sparse-index-range");
+    NativeUploadAllocation batch{};
+    const VkDeviceSize bytes = VkDeviceSize(total) * element_size;
+    if (!AllocateUpload(bytes, VkDeviceSize(element_size), batch, NativeUploadKind::kIndex) ||
+        !profile::CpuCall(profile::CpuOp::kIndexConvert, [&] {
+          return WriteNativeSparseTriangleIndices(
+              cpu_indices(), ranges, index32, {batch.mapping, size_t(bytes)});
+        }))
+      return fail("sparse-index-upload");
+    // Preserve the original index words, triangle order and common baseVertex.
+    selected_index_bytes = batch.mapping;
+    host_index_count = total;
+    host_start_index = 0;
+    host_index_buffer = batch.buffer;
+    host_index_offset = batch.offset;
+  } else if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kTriangleFan)) {
     const NativeTriangleFanKey fan_key{draw.start_index, draw.index_count,
         draw.primitive_restart_index, index32, guest_restart_enabled};
     const auto& source = cpu_indices();
@@ -24807,7 +24837,7 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
   if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kTriangleList) &&
       !guest_restart_enabled && host_start_index == draw.start_index &&
       host_index_count >= 96 && host_index_count % 3 == 0 &&
-      REXCVAR_GET(gta4_native_vertex_cache_order)) {
+      REXCVAR_GET(gta4_native_vertex_cache_order) && !sparse_batch) {
     const NativeFixedFunctionState& fixed = command.fixed_function_state;
     const bool monotonic_depth = fixed.depth_enable &&
         (fixed.depth_function == 1 || fixed.depth_function == 3 || fixed.depth_function == 4 ||
