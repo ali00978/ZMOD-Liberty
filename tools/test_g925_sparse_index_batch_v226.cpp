@@ -27,7 +27,8 @@ static void ExactBatch(uint32_t seed, bool repeated) {
   for (uint32_t n = 0; n < 20; ++n) {
     const uint32_t count = 3 * (1 + rng() % 120);
     uint32_t first = rng() % (source_count - count);
-    if (repeated && n % 4 == 0 && n)
+    if (repeated && n % 4 == 0 && n &&
+        uint64_t(ranges[n - 1].first) + count <= source_count)
       first = ranges[n - 1].first;
     else if (!repeated && n % 4 == 0 && n && previous_end + count <= source_count)
       first = previous_end;
