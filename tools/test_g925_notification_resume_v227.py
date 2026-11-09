@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Verify Android notification-shade focus recovery in the actual SDL window source."""
 from pathlib import Path
-import re
 
 root = Path(__file__).resolve().parents[1]
 source = (root / "glue/rexglue-sdk-main/src/ui/window_sdl.cpp").read_text()
@@ -33,8 +32,8 @@ assert foreground.index("surface_detached_ = false;") < foreground.index(
 
 # A focus change with the same surface is not a GPU reset. This existing
 # guard must remain; repeated notifications cannot rebuild Vulkan.
-attach_block = foreground.split("case SDL_EVENT_DID_ENTER_FOREGROUND:", 1)[0] if False else foreground
-assert len(re.findall(r"OnSurfaceChanged\\(true\\);", attach_block)) == 1
+attach_block = foreground
+assert attach_block.count("OnSurfaceChanged(true);") == 1
 assert "surface_detached_ && GetNativeWindowHandle()" in attach_block
 # Normal focus handling still forwards the event to the app and input layer.
 window_handler = source[source.index("void WindowSDL::HandleWindowEvent("):
