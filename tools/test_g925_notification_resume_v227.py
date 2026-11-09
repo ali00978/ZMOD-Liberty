@@ -41,4 +41,15 @@ window_handler = source[source.index("void WindowSDL::HandleWindowEvent("):
 assert "HandleAppLifecycleEvent(event);" in window_handler
 assert "case SDL_EVENT_WINDOW_FOCUS_GAINED:" in window_handler
 assert "OnFocusUpdate(true, destruction_receiver);" in window_handler
-print("G925 v2.27 Android notification resume/source regression: PASS")
+# A 500-ms timed wait already sleeps while credits are unavailable.
+# A second 500-ms sleep makes the mixer unresponsive during Android resume.
+audio = (root / "glue/rexglue-sdk-main/src/audio/audio_system.cpp").read_text()
+begin = audio.index("void AudioSystem::WorkerThreadMain()")
+end = audio.index("int AudioSystem::FindFreeClient()", begin)
+worker = audio[begin:end]
+assert "std::chrono::milliseconds(500)" in worker
+assert "rex::thread::Sleep(std::chrono::milliseconds(500))" not in worker
+timeout = worker[worker.index("if (result.first == rex::thread::WaitResult::kTimeout) {"):]
+assert "continue;" in timeout.split("bool pumped = false;", 1)[0]
+assert "rex::thread::Sleep(std::chrono::milliseconds(5))" in worker
+print("G925 v2.27 Android notification surface/audio recovery regression: PASS")
