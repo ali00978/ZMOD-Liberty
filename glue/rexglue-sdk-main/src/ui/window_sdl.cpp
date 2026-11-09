@@ -925,6 +925,14 @@ void WindowSDL::HandleAppLifecycleEvent(SDL_Event& event) {
     case SDL_EVENT_DID_ENTER_FOREGROUND:
     case SDL_EVENT_WINDOW_RESTORED:
     case SDL_EVENT_WINDOW_SHOWN:
+    case SDL_EVENT_WINDOW_FOCUS_GAINED:
+    case SDL_EVENT_WINDOW_EXPOSED:
+      // Android's notification shade can cause a MINIMIZED/HIDDEN event
+      // followed by FOCUS_GAINED or EXPOSED without a matching RESTORED.
+      // In that case the Vulkan surface was detached above, and otherwise
+      // stays detached indefinitely even though the ANativeWindow is back.
+      // Only reconnect on a real detached->attached transition; a normal
+      // notification focus change must not rebuild a healthy swapchain.
       if (surface_detached_ && GetNativeWindowHandle()) {
         surface_detached_ = false;
         __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp", "surface: foregrounded, attaching %p", GetNativeWindowHandle());
