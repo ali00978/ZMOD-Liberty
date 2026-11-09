@@ -39,6 +39,12 @@ assert 'new String[] {"Default (4)", "0", "1", "2", "3", "4"}' in launcher
 assert 'new String[] {"0", "1", "2", "3", "4"}' in launcher
 assert '--gta4_native_max_queued_frames=4' in defaults
 assert '{"--gta4_native_max_queued_frames=3", "--gta4_native_max_queued_frames=4"}' in activity
+assert "enableRunAhead4Once(dataRoot);" in activity
+assert 'new File(dataRoot, ".g925_runahead4_v228")' in activity
+assert 'value.equals("--gta4_extra_frames_in_flight=0")' in activity
+assert 'lines.set(i, "--gta4_extra_frames_in_flight=4");' in activity
+assert 'lines.add("--gta4_extra_frames_in_flight=4");' in activity
+assert "marker.createNewFile()" in activity
 assert '--gta4_extra_frames_in_flight=0' in launcher  # Clean benchmark remains available.
 assert "JOBS=\"\u0024{1:-\u0024(( \u0024(nproc) > 2 ? \u0024(nproc) - 1 : 1 ))}\"" in native
 assert "python tools/test_g925_runahead_v228.py" in workflow
