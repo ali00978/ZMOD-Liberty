@@ -41,6 +41,19 @@ window_handler = source[source.index("void WindowSDL::HandleWindowEvent("):
 assert "HandleAppLifecycleEvent(event);" in window_handler
 assert "case SDL_EVENT_WINDOW_FOCUS_GAINED:" in window_handler
 assert "OnFocusUpdate(true, destruction_receiver);" in window_handler
+# Focus recovery must not race with the guest-output paint thread or rebuild
+# the Vulkan swapchain merely to clear a stale Android display phase.
+header = (root / "glue/rexglue-sdk-main/include/rex/ui/presenter.h").read_text()
+presenter = (root / "glue/rexglue-sdk-main/src/ui/presenter.cpp").read_text()
+focus_case = window_handler.split("case SDL_EVENT_WINDOW_FOCUS_GAINED:", 1)[1].split(
+    "case SDL_EVENT_WINDOW_FOCUS_LOST:", 1)[0]
+assert "active_presenter->RequestFramePacerResync();" in focus_case
+assert "RequestFramePacerResync()" in header
+assert "std::atomic<bool> frame_pacer_resync_requested_{false};" in header
+assert "frame_pacer_resync_requested_.store(true, std::memory_order_release);" in header
+paint = presenter[presenter.index("Presenter::PaintResult Presenter::PaintAndPresent("):]
+assert "frame_pacer_resync_requested_.exchange(false, std::memory_order_acq_rel)" in paint
+assert paint.index("frame_pacer_.Reset();") < paint.index("frame_pacer_.Configure(")
 # A 500-ms timed wait already sleeps while credits are unavailable.
 # A second 500-ms sleep makes the mixer unresponsive during Android resume.
 audio = (root / "glue/rexglue-sdk-main/src/audio/audio_system.cpp").read_text()
