@@ -33,7 +33,7 @@ assert "kNativeTextureEvictionGraceFrames = 240;" in native
 assert "kNativeTextureCacheRetentionFrames = 600;" in native
 assert "kNativeBufferCacheRetentionFrames = 600;" in native
 assert "kNativeBufferCacheLimitMiB = 256;" in native
-assert "--gta4_native_max_queued_frames=3" in args
+assert "--gta4_native_max_queued_frames=4" in args
 assert 'G925_BASE_RUN_ID: ${{ needs.plan.outputs.base_run_id }}' in workflow
 assert 'python tools/validate_g925_fast_apk.py' in workflow
 assert "feature/g925-stable-16ms-v26" in workflow
