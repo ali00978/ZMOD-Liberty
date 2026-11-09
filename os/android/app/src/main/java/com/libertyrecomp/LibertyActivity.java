@@ -612,6 +612,9 @@ public class LibertyActivity extends SDLActivity {
             // shadows; 0.85 was an interim default of test builds).
             {"--gta4_dynamic_draw_distance_min=0.75", "--gta4_dynamic_draw_distance_min=0.80"},
             {"--gta4_dynamic_draw_distance_min=0.85", "--gta4_dynamic_draw_distance_min=0.80"},
+            // Migrate only the old bundled three-slot queue; do not overwrite
+            // custom user settings on existing installations.
+            {"--gta4_native_max_queued_frames=3", "--gta4_native_max_queued_frames=4"},
             // 0.5.9.1: the in-game Display menu owns these settings (their
             // Android defaults are now built in). Copied default lines
             // outranked its saved choices on every launch; a null target drops
