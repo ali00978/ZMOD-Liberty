@@ -377,6 +377,14 @@ class Presenter {
   void OnSurfaceMonitorUpdateFromUIThread(bool old_monitor_potentially_disconnected);
   void OnSurfaceResizeFromUIThread();
 
+  // Notification overlays can shift the Android compositor's display phase
+  // without recreating the window or Vulkan swapchain. Do NOT reset the
+  // paint-owner FramePacer from the UI event thread: it may be owned by the
+  // guest output thread. Request one atomic resync on the next paint instead.
+  void RequestFramePacerResync() noexcept {
+    frame_pacer_resync_requested_.store(true, std::memory_order_release);
+  }
+
   // For calling from the platform paint event handler. Refreshes the surface
   // connection if needed, and also paints if possible and if needed (if there
   // are no UI overlays, and the guest output is presented directly from the
@@ -1073,6 +1081,7 @@ class Presenter {
   bool guest_output_active_last_refresh_ = false;
   std::atomic<uint32_t> host_frame_rate_limit_{0};
   FramePacer frame_pacer_;  // Existing exclusive paint owner.
+  std::atomic<bool> frame_pacer_resync_requested_{false};
   FramePacer::Attempt pacing_attempt_{};
   FramePublicationGate frame_publication_gate_;
   FramePublicationPipeline frame_publication_pipeline_;  // Refresh owner only.
