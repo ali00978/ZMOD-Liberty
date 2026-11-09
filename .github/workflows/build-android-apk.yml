@@ -166,6 +166,7 @@ jobs:
           python tools/test_g925_index_upload_v29.py
           python tools/test_g925_single_pass_index_v225.py
           python tools/test_g925_sparse_index_batch_v226.py
+          python tools/test_g925_notification_resume_v227.py
           python tools/test_g925_present_overlap_v212.py
           python tools/test_g925_profile_report_v27.py
 
