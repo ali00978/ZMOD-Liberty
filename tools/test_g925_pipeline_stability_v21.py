@@ -34,5 +34,6 @@ assert 'recent.size() > 240' in java
 assert 'play for 2 minutes' in java
 assert 'kNativeTextureEvictionGraceFrames = 240;' in old
 assert 'branches: [feature/g925-stable-16ms-v26]' in workflow
-assert "github.event_name == 'push'" in workflow
+assert "needs.plan.outputs.build_mode == 'full'" in workflow
+assert 'python3 tools/validate_g925_fast_apk.py --select-mode' in workflow
 print("PASS: demanded pipeline priority, capacity rejection and stock Mali renderer preserved")
