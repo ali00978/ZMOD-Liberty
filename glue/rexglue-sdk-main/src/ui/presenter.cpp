@@ -1813,6 +1813,13 @@ Presenter::PaintResult Presenter::PaintAndPresent(bool execute_ui_drawers) {
   assert_false(execute_ui_drawers && !is_in_ui_thread_paint_);
   assert_true(surface_paint_connection_state_ == SurfacePaintConnectionState::kConnectedPaintable);
   SurfacePaintConnectionState connection_state_before = surface_paint_connection_state_;
+  // Consume focus return only on the exclusive paint owner. Android can
+  // change the display phase while its notification shade is on top without
+  // changing the surface dimensions; keeping the old observed timing phase
+  // can otherwise penalize every subsequent frame.
+  if (frame_pacer_resync_requested_.exchange(false, std::memory_order_acq_rel)) {
+    frame_pacer_.Reset();
+  }
   const uint32_t fps = host_frame_rate_limit_.load(std::memory_order_relaxed);
   frame_pacer_.Configure(fps, FramePacerNowNs());
   PollPresentationTiming();
