@@ -33,6 +33,7 @@
 #include <rex/diagnostics/policy.h>
 #include <rex/platform.h>
 #include <rex/ui/flags.h>
+#include <rex/ui/presenter.h>
 #include <rex/ui/sdl_virtual_key.h>
 
 #if REX_PLATFORM_WIN32
@@ -622,6 +623,14 @@ void WindowSDL::HandleWindowEvent(SDL_Event& event) {
       RefreshPhysicalSafeArea();
       break;
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
+#if REX_PLATFORM_ANDROID
+      // Focus can return after a notification without any swapchain change.
+      // Invalidate only the old presentation phase, on the next paint owner
+      // turn, instead of triggering a costly new Vulkan surface.
+      if (auto* active_presenter = presenter()) {
+        active_presenter->RequestFramePacerResync();
+      }
+#endif
       OnFocusUpdate(true, destruction_receiver);
       break;
     case SDL_EVENT_WINDOW_FOCUS_LOST:
