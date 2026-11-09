@@ -22,7 +22,7 @@ assert 'never discards demanded work' in unit
 assert 'promotes a duplicate speculative request' in unit
 assert 'CHECK_FALSE(can_displace_demanded)' in unit
 assert 'CHECK(evicted2)' in unit
-assert '--gta4_native_max_queued_frames=3' in source
+assert '--gta4_native_max_queued_frames=4' in source
 java = (root / "os/android/app/src/main/java/com/libertyrecomp/LauncherActivity.java").read_text()
 assert 'Button shareStutter = button("SHARE STUTTER REPORT"' in java
 assert 'shareG925StutterReport()' in java
