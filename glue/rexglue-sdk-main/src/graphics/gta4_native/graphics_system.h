@@ -2,6 +2,7 @@
 
 #include "native_triangle_fan.h"
 #include "native_index_conversion.h"
+#include "native_sparse_index_batch.h"
 #include "native_vertex_cache.h"
 #include "native_persistent_buffer_map.h"
 #include "native_deferred_release.h"
@@ -1526,6 +1527,10 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
   // Index count RecordIndexedPrimitive uses instead of the command's own when
   // consecutive equivalent draws are recorded as one (0: none).
   uint32_t indexed_merge_count_override_ = 0;
+  // Recorder-only, alive solely while one sparse index batch is emitted.
+  // No command or guest buffer is mutated, and the count is cleared before retry.
+  std::array<NativeSparseIndexRange, kNativeSparseIndexBatchMaxDraws> sparse_indexed_ranges_{};
+  uint32_t sparse_indexed_range_count_ = 0;
   // Original vertex count is immutable; normal DrawPrimitive recording may
   // consume an exact adjacent triangle-list run when this is nonzero.
   uint32_t primitive_merge_count_override_ = 0;
