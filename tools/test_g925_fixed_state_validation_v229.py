@@ -23,9 +23,9 @@ assert '#include "native_fixed_state_validation_policy.h"' in renderer
 assert "ShouldVerifyRecordedFixedState(" in renderer
 assert "REXCVAR_GET(gta4_validate_native_hot_caches)" in renderer
 assert "REXCVAR_GET(gta4_native_gpu_breadcrumbs)" in renderer
-assert re.search(r"ShouldVerifyRecordedFixedState\\([\\s\\S]*?command_index\\) &&\\s*queued_command.recorded_fixed_function_state_hash !=", renderer)
+assert re.search(r"ShouldVerifyRecordedFixedState\([\s\S]*?command_index\) &&\s*queued_command.recorded_fixed_function_state_hash !=", renderer)
 gradle = (root / "os/android/app/build.gradle.kts").read_text()
-assert re.search(r"versionCode\\s*=\\s*57", gradle)
+assert re.search(r"versionCode\s*=\s*57", gradle)
 assert "-alpha-2.29-g925-native-recording" in gradle
 workflow = (root / ".github/workflows/build-android-apk.yml").read_text()
 assert "python tools/test_g925_fixed_state_validation_v229.py" in workflow
