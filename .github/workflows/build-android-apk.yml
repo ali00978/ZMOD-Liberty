@@ -205,7 +205,20 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
       - name: Fetch pinned dependencies and apply patches
-        run: python tools/setup_repo.py
+        # Pinned submodule clones are idempotent. Retry transient GitHub CDN
+        # errors without restarting successful checkout, SDK or C++ tests.
+        run: |
+          for attempt in 1 2 3; do
+            if python tools/setup_repo.py; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "Pinned dependency setup failed after 3 attempts" >&2
+              exit 1
+            fi
+            echo "Dependency fetch failed; retry $((attempt + 1))/3"
+            sleep $((attempt * 5))
+          done
 
       # These pinned DXC/glslang release binaries are unchanged by engine
       # commits. Cache across runs so the slow native build does not download
