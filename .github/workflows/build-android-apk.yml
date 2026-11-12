@@ -207,6 +207,15 @@ jobs:
       - name: Fetch pinned dependencies and apply patches
         run: python tools/setup_repo.py
 
+      # These pinned DXC/glslang release binaries are unchanged by engine
+      # commits. Cache across runs so the slow native build does not download
+      # them again or fail on a transient GitHub release CDN 504.
+      - name: Cache verified host shader tools
+        uses: actions/cache@v4
+        with:
+          path: out/host-tools
+          key: g925-host-shader-tools-dxc-1.9.2609-glslang-16.6.0-v1
+
       - name: Build the Vulkan driver proxy
         run: |
           export ANDROID_HOME="$(cygpath -u "$ANDROID_HOME")"
