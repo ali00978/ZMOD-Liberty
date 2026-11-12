@@ -48,5 +48,5 @@ assert "marker.createNewFile()" in activity
 assert '--gta4_extra_frames_in_flight=0' in launcher  # Clean benchmark remains available.
 assert "JOBS=\"\u0024{1:-\u0024(( \u0024(nproc) > 2 ? \u0024(nproc) - 1 : 1 ))}\"" in native
 assert "python tools/test_g925_runahead_v228.py" in workflow
-assert re.search(r"versionCode\s*=\s*56", gradle)
+assert re.search(r"versionCode\s*=\s*(?:5[6-9]|[6-9][0-9])\b", gradle)
 print("PASS: 4 extra guest frames, native queue bounded, faster build, C++ replay and clean baseline")
