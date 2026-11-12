@@ -12,7 +12,7 @@
 --gta4_scenario_ped_density_scale=0.4
 --gta4_profile_native_detailed_cpu=false
 --gta4_profile_native_detailed_gpu=false
---gta4_native_max_queued_frames=3
+--gta4_native_max_queued_frames=4
 # The 30 FPS guard (environment reflection rate only now) is off by default.
 # Mali Edition preset: refresh the environment reflection every other frame
 # while the game is below 30 FPS (saves work exactly when it struggles).

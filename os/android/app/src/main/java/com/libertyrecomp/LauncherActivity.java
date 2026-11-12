@@ -920,16 +920,18 @@ public class LauncherActivity extends Activity {
                     new String[] {"gta4_reflection_aa"},
                     new String[] {"Default", "Off", "Original"},
                     new String[] {"off", "original"}),
-            new GraphicsSetting("Run-ahead frames", "More can raise FPS but adds input delay",
+            new GraphicsSetting("Run-ahead frames",
+                    "0-4 EXTRA guest frames: 4 can raise throughput, but increases input delay",
                     new String[] {"gta4_extra_frames_in_flight"},
-                    new String[] {"Default", "0", "1", "2"},
-                    new String[] {"0", "1", "2"}),
+                    new String[] {"Default (4)", "0", "1", "2", "3", "4"},
+                    new String[] {"0", "1", "2", "3", "4"}),
             new GraphicsSetting("CPU boost",
-                    "How hard the game asks Android for CPU speed. Steady keeps the clocks up "
-                            + "(fewer drops, a little warmer); Battery saves power",
+                    "Maximum asks Android for 16ms CPU work (60 FPS goal, warmer). "
+                            + "Steady and Balanced are less aggressive; Battery saves power.",
                     new String[] {"android_performance_hint_target_ms"},
-                    new String[] {"Default", "Maximum", "Steady", "Balanced", "Battery"},
-                    new String[] {"20", "25", "30", "33"}),
+                    new String[] {"Default (16ms)", "Maximum (16ms)", "Steady (25ms)",
+                            "Balanced (30ms)", "Battery (33ms)"},
+                    new String[] {"16", "25", "30", "33"}),
             new GraphicsSetting("CPU response pacing",
                     "How often Android receives frame durations. Compare 25ms responsive "
                             + "against the original 100ms CPU governor feedback.",
@@ -959,6 +961,16 @@ public class LauncherActivity extends Activity {
                     new String[] {"kernel_spinlock_spins"},
                     new String[] {"Default", "Minimal", "Short", "Normal", "Long"},
                     new String[] {"4", "16", "64", "256"}),
+            new GraphicsSetting("Automatic draw distance",
+                    "Adaptive mode can reduce your chosen draw distance. Fixed keeps it unchanged.",
+                    new String[] {"gta4_dynamic_draw_distance"},
+                    new String[] {"Default", "Fixed (keep quality)", "Adaptive"},
+                    new String[] {"false", "true"}),
+            new GraphicsSetting("Reflection FPS guard",
+                    "May refresh reflections less often below 30 FPS. Off keeps the selected rate.",
+                    new String[] {"gta4_fps_guard"},
+                    new String[] {"Default", "Off (keep quality)", "Adaptive"},
+                    new String[] {"0", "2"}),
             new GraphicsSetting("Heat guard",
                     "Lowers the draw distance a little before the phone overheats and restores "
                             + "it once it cools, for steadier clocks instead of throttling",
@@ -1134,6 +1146,8 @@ public class LauncherActivity extends Activity {
             case "CPU response pacing":
             case "CPU hint thread stability":
             case "Android CPU performance hints":
+            case "Automatic draw distance":
+            case "Reflection FPS guard":
             case "Heat guard":
             case "Thread waiting":
                 return 1;
@@ -1474,7 +1488,7 @@ public class LauncherActivity extends Activity {
             final String shared = report;
             mMain.post(() -> {
                 if (shared == null || shared.isEmpty()) {
-                    toast("No new capture yet. Run CAPTURE CPU + GPU BOTTLENECK, "
+                    toast("No new capture from this app version yet. Run CAPTURE CPU + GPU BOTTLENECK, "
                             + "play at least 85 seconds, then return here.");
                     return;
                 }
@@ -2340,19 +2354,35 @@ public class LauncherActivity extends Activity {
             // started with; end it so this launch uses the current choice.
             stopGameProcess();
             DebugLog.stopLeftovers(mDataRoot);
+            final long captureStartedAt;
+            if (nativeProfile) {
+                try {
+                    captureStartedAt = G925NativeProfileReport.beginCapture(mDataRoot);
+                    boolean saved = getSharedPreferences("g925_native_profile", MODE_PRIVATE)
+                            .edit().putLong("capture_started", captureStartedAt)
+                            .putString("capture_settings",
+                                    G925NativeProfileReport.captureSettings(mDataRoot))
+                            .commit();
+                    if (!saved) throw new IOException("Capture identity was not saved");
+                } catch (IOException e) {
+                    Log.w(TAG, "Unable to prepare a fresh native capture", e);
+                    mMain.post(() -> {
+                        setBusy(false, null);
+                        toast("Unable to prepare a fresh capture. Please try again.");
+                    });
+                    return;
+                }
+            } else {
+                captureStartedAt = 0;
+            }
             mMain.post(() -> {
                 setBusy(false, null);
                 Intent intent = new Intent(this, LibertyActivity.class);
                 if (debugLog) intent.putExtra(LibertyActivity.EXTRA_DEBUG_LOG, true);
                 if (nativeProfile) {
-                    // Check the CSV timestamp when sharing so an earlier run
-                    // can never be mistaken for the current hardware test.
-                    getSharedPreferences("g925_native_profile", MODE_PRIVATE)
-                            .edit().putLong("capture_started", System.currentTimeMillis())
-                            .putString("capture_settings",
-                                    G925NativeProfileReport.captureSettings(mDataRoot))
-                            .commit();
                     intent.putExtra(LibertyActivity.EXTRA_G925_NATIVE_PROFILE, true);
+                    intent.putExtra(LibertyActivity.EXTRA_G925_NATIVE_PROFILE_STARTED,
+                            captureStartedAt);
                 }
                 android.content.SharedPreferences perf = perfTestPreferences();
                 intent.putExtra(LibertyActivity.EXTRA_SHADOWS_OFF, perf.getBoolean(PERF_SHADOWS_OFF, false));
