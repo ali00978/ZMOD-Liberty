@@ -5,8 +5,9 @@ name: Android APK
 # Download the result from the run's "Artifacts" section.
 #
 # Full builds still compile the whole engine when native sources change.
-# Manual java-only mode reuses verified native libraries from a previous successful
-# APK of THIS repository, but refuses to run if native sources differ.
+# Java-only mode reuses verified native libraries from a previous successful APK
+# of THIS repository. PR updates select it automatically only after the source
+# compatibility guard passes; manual builds can still request full compilation.
 
 on:
   push:
@@ -20,6 +21,14 @@ on:
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/workflows/build-macos.yml'
       - '.github/workflows/repository-checks.yml'
+  # Build a child branch against the verified 2.6 base so GitHub permits
+  # restoring that base branch's compiler cache (sibling push builds cannot).
+  pull_request:
+    branches: [feature/g925-stable-16ms-v26]
+    types: [opened, synchronize, reopened]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   workflow_dispatch:
     inputs:
       gpu:
@@ -51,8 +60,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plan:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    name: Select verified full or Java-only build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      build_mode: ${{ steps.mode.outputs.build_mode }}
+      base_run_id: ${{ steps.mode.outputs.base_run_id }}
+    steps:
+      - name: Checkout build guard at the exact target commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /tools/validate_g925_fast_apk.py
+
+      - name: Select build mode from verified successful artifacts
+        id: mode
+        env:
+          GH_TOKEN: ${{ github.token }}
+          G925_TARGET_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          G925_HEAD_BRANCH: ${{ github.head_ref || github.ref_name }}
+          G925_REQUESTED_MODE: ${{ inputs.build_mode || 'full' }}
+          G925_BASE_RUN_ID: ${{ inputs.base_run_id }}
+          LIBERTY_GPU: ${{ inputs.gpu || 'mali' }}
+          LIBERTY_CPU: ${{ inputs.cpu || 'armv9' }}
+        run: python3 tools/validate_g925_fast_apk.py --select-mode
+
   apk:
-    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.build_mode != 'java-only') }}
+    needs: plan
+    if: ${{ needs.plan.outputs.build_mode == 'full' }}
     name: APK (${{ inputs.gpu || 'mali' }}, ${{ inputs.cpu || 'armv9' }})
     runs-on: windows-2022
     timeout-minutes: 360
@@ -72,6 +111,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Allow long paths
@@ -103,19 +143,50 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Select host C++ toolchain for executable regressions
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Run C++ state replay and Java profile regressions
+        env:
+          G925_TEST_CXX: clang++
+        run: |
+          python tools/test_g925_render_state_v27.py
+          python tools/test_g925_draw_lookup_v28.py
+          python tools/test_g925_cache_batch_v214.py
+          python tools/test_g925_memo_resolve_v215.py
+          python tools/test_g925_render_hotpaths_v216.py
+          python tools/test_g925_stutter_retirement_v217.py
+          python tools/test_g925_hint_target_v218.py
+          python tools/test_g925_surface_retirement_v219.py
+          python tools/test_g925_constant_index_v220.py
+          python tools/test_g925_surface_hot_v221.py
+          python tools/test_g925_raster_surface_hot_v222.py
+          python tools/test_g925_zero_coverage_v223.py
+          python tools/test_g925_rectangle_batch_v224.py
+          python tools/test_g925_index_upload_v29.py
+          python tools/test_g925_single_pass_index_v225.py
+          python tools/test_g925_sparse_index_batch_v226.py
+          python tools/test_g925_notification_resume_v227.py
+          python tools/test_g925_runahead_v228.py
+          python tools/test_g925_present_overlap_v212.py
+          python tools/test_g925_profile_report_v27.py
+
       - name: Install Android SDK platform and NDK r29
         run: |
           SDKMANAGER="$(cygpath -u "$ANDROID_HOME")/cmdline-tools/latest/bin/sdkmanager.bat"
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" --install "ndk;$NDK_VER" "platforms;android-35" "build-tools;35.0.0"
 
+      - name: Replay G925 draw preparation with NDK Vulkan headers
+        env:
+          G925_TEST_CXX: clang++
+        run: python tools/test_g925_draw_preparation_v211.py
+
       - name: Restore build cache
         id: cache
         uses: actions/cache/restore@v4
         with:
-          path: |
-            out/build
-            out/host-tools
+          path: out/build
           key: android-${{ env.LIBERTY_GPU }}-${{ env.LIBERTY_CPU }}-${{ github.sha }}
           restore-keys: |
             android-${{ env.LIBERTY_GPU }}-${{ env.LIBERTY_CPU }}-
@@ -132,7 +203,29 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
       - name: Fetch pinned dependencies and apply patches
-        run: python tools/setup_repo.py
+        # Pinned submodule clones are idempotent. Retry transient GitHub CDN
+        # errors without restarting successful checkout, SDK or C++ tests.
+        run: |
+          for attempt in 1 2 3; do
+            if python tools/setup_repo.py; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "Pinned dependency setup failed after 3 attempts" >&2
+              exit 1
+            fi
+            echo "Dependency fetch failed; retry $((attempt + 1))/3"
+            sleep $((attempt * 5))
+          done
+
+      # These pinned DXC/glslang release binaries are unchanged by engine
+      # commits. Cache across runs so the slow native build does not download
+      # them again or fail on a transient GitHub release CDN 504.
+      - name: Cache verified host shader tools
+        uses: actions/cache@v4
+        with:
+          path: out/host-tools
+          key: g925-host-shader-tools-dxc-1.9.2609-glslang-16.6.0-v1
 
       - name: Build the Vulkan driver proxy
         run: |
@@ -154,8 +247,24 @@ jobs:
         shell: bash
         run: |
           if [ -n "${SCCACHE_PATH:-}" ]; then
-            "$SCCACHE_PATH" --show-stats || true
+            "$SCCACHE_PATH" --show-stats | tee sccache-stats.txt
+            "$SCCACHE_PATH" --show-stats --stats-format=json > sccache-stats.json
+            {
+              echo '### C++ compiler cache'
+              echo '```text'
+              cat sccache-stats.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Upload compiler cache statistics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: g925-build-cache-statistics
+          path: sccache-stats.*
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Save build cache
         if: always() && steps.cache.outputs.cache-hit != 'true'
@@ -193,7 +302,8 @@ jobs:
           retention-days: 30
 
   fast-apk:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_mode == 'java-only' }}
+    needs: plan
+    if: ${{ needs.plan.outputs.build_mode == 'java-only' }}
     name: Fast APK (reuse verified Mali ARMv9 native libraries)
     runs-on: windows-2022
     timeout-minutes: 90
@@ -203,7 +313,8 @@ jobs:
     env:
       LIBERTY_GPU: ${{ inputs.gpu || 'mali' }}
       LIBERTY_CPU: ${{ inputs.cpu || 'armv9' }}
-      G925_BASE_RUN_ID: ${{ inputs.base_run_id || '41363883009' }}
+      G925_BASE_RUN_ID: ${{ needs.plan.outputs.base_run_id }}
+      G925_TARGET_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       NDK_VER: 29.0.14206865
       STRIP: '1'
 
@@ -211,6 +322,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Allow long paths
@@ -241,7 +353,7 @@ jobs:
       - name: Download verified previous native APK
         uses: actions/download-artifact@v4
         with:
-          run-id: ${{ inputs.base_run_id || '41363883009' }}
+          run-id: ${{ needs.plan.outputs.base_run_id }}
           pattern: LibertyRecompAndroid-*
           merge-multiple: true
           path: out/fast-apk
@@ -258,6 +370,9 @@ jobs:
           SDKMANAGER="$(cygpath -u "$ANDROID_HOME")/cmdline-tools/latest/bin/sdkmanager.bat"
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Test final capture settings across separate Java processes
+        run: python tools/test_g925_profile_report_v27.py
 
       - name: Prepare pinned SDL Java dependency sources
         run: |
