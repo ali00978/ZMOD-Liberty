@@ -532,7 +532,7 @@ REXCVAR_DEFINE_BOOL(
     "Discard prior resolve contents only for proven complete subresource overwrites")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 REXCVAR_DEFINE_BOOL(
-    gta4_trace_native_renderer, true, "GTA IV/Diagnostics",
+    gta4_trace_native_renderer, false, "GTA IV/Diagnostics",
     "Emit deterministic frame-correlated native renderer state, resource, draw, resolve, and "
     "presentation diagnostics");
 REXCVAR_DEFINE_BOOL(
@@ -5034,8 +5034,15 @@ bool Gta4NativeGraphicsSystem::ValidateAndCopyCommand(const void* command, size_
             DirtyStateComponentBit(DirtyStateComponent::kIntegerConstants);
       }
       native_command.fixed_function_state = DecodeFixedFunctionState(device_state);
+      // Full-state hashing is for diagnostics, never for draw or pipeline state.
       native_command.captured_fixed_function_state_hash =
-          HashFixedFunctionState(native_command.fixed_function_state);
+          ShouldCaptureRecordedFixedState(
+              REXCVAR_GET(gta4_validate_native_hot_caches),
+              CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeTrace),
+              CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeProbes),
+              REXCVAR_GET(gta4_native_gpu_breadcrumbs))
+              ? HashFixedFunctionState(native_command.fixed_function_state)
+              : 0;
     }
     for (uint32_t index = 0; index < kRenderTargetCount; ++index) {
       native_command.snapshot_render_targets[index] = CaptureSurfaceDescriptor(
@@ -7317,8 +7324,15 @@ void Gta4NativeGraphicsSystem::RenderWorkerMain() {
             command.type == CommandType::kDrawPrimitiveUp ||
             command.type == CommandType::kDrawIndexedPrimitive ||
             command.type == CommandType::kClear) {
+          // Do not serialize and hash every command in normal gameplay.
           command.recorded_fixed_function_state_hash =
-              HashFixedFunctionState(command.fixed_function_state);
+              ShouldCaptureRecordedFixedState(
+                  REXCVAR_GET(gta4_validate_native_hot_caches),
+                  CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeTrace),
+                  CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeProbes),
+                  REXCVAR_GET(gta4_native_gpu_breadcrumbs))
+                  ? HashFixedFunctionState(command.fixed_function_state)
+                  : 0;
           const uint32_t device = CommandDevice(command.type, command.bytes.data());
           if (!ApplyShaderConstantDelta(command, device)) {
             REXLOG_ERROR("gta4-native-constants: rejected worker command type={} device={:08X}",
@@ -31771,6 +31785,7 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
          queued_command.type == CommandType::kDrawPrimitiveUp ||
          queued_command.type == CommandType::kDrawIndexedPrimitive ||
          queued_command.type == CommandType::kClear) &&
+        queued_command.recorded_fixed_function_state_hash &&
         ShouldVerifyRecordedFixedState(
             REXCVAR_GET(gta4_validate_native_hot_caches) ||
                 REXCVAR_GET(gta4_trace_native_renderer) ||
