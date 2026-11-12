@@ -72,6 +72,7 @@ public class LibertyActivity extends SDLActivity {
     static final String EXTRA_DEBUG_LOG = "debug_log";
     /** One-shot late native CPU/GPU profile, isolated from normal gameplay. */
     static final String EXTRA_G925_NATIVE_PROFILE = "g925_native_profile";
+    static final String EXTRA_G925_NATIVE_PROFILE_STARTED = "g925_native_profile_started";
     /** Launcher "Performance test settings": no sun shadow map. */
     static final String EXTRA_SHADOWS_OFF = "perf_shadows_off";
     /** Launcher "Performance test settings": fixed 0.5 draw distance. */
@@ -290,6 +291,7 @@ public class LibertyActivity extends SDLActivity {
         }
         migrateArguments(argsFile);
         migrateConfig(new File(new File(dataRoot, "LibertyRecomp"), "native.toml"));
+        enableRunAhead4Once(dataRoot);
         List<String> arguments = new ArrayList<>(Arrays.asList(readArguments(argsFile)));
         // Performance overlay lines chosen on the launcher (written by
         // LauncherActivity); later arguments win, so these override args.txt.
@@ -369,6 +371,15 @@ public class LibertyActivity extends SDLActivity {
         // config, so this also recovers installs that already picked it.
         arguments.add("--gpu_plugin=gta4-native");
         mArguments = withoutDuplicateOptions(arguments).toArray(new String[0]);
+        if (nativeProfile) {
+            try {
+                G925NativeProfileReport.saveAppliedSettings(dataRoot,
+                        getIntent().getLongExtra(EXTRA_G925_NATIVE_PROFILE_STARTED, 0),
+                        Arrays.asList(mArguments));
+            } catch (IOException e) {
+                Log.w(TAG, "Could not persist final capture settings", e);
+            }
+        }
         String driver = readFirstLine(new File(dataRoot, "driver.txt"));
         mDriverText = driver;
         String lower = driver == null ? "" : driver.toLowerCase(Locale.ROOT);
@@ -602,6 +613,9 @@ public class LibertyActivity extends SDLActivity {
             // shadows; 0.85 was an interim default of test builds).
             {"--gta4_dynamic_draw_distance_min=0.75", "--gta4_dynamic_draw_distance_min=0.80"},
             {"--gta4_dynamic_draw_distance_min=0.85", "--gta4_dynamic_draw_distance_min=0.80"},
+            // Migrate only the old bundled three-slot queue; do not overwrite
+            // custom user settings on existing installations.
+            {"--gta4_native_max_queued_frames=3", "--gta4_native_max_queued_frames=4"},
             // 0.5.9.1: the in-game Display menu owns these settings (their
             // Android defaults are now built in). Copied default lines
             // outranked its saved choices on every launch; a null target drops
@@ -668,6 +682,48 @@ public class LibertyActivity extends SDLActivity {
             }
         } catch (IOException e) {
             Log.w(TAG, "cannot update " + file, e);
+        }
+    }
+
+    /**
+     * The previous launcher persisted an explicit 0 (its old default). On
+     * first launch of 2.28, activate the requested four-frame preset once,
+     * then let the player freely select 0-4 in the launcher afterwards.
+     * Preserve existing explicit 1/2 settings and never rewrite game assets.
+     */
+    private static void enableRunAhead4Once(File dataRoot) {
+        File marker = new File(dataRoot, ".g925_runahead4_v228");
+        if (marker.exists()) return;
+        File graphics = new File(dataRoot, GRAPHICS_FILE);
+        try {
+            List<String> lines = graphics.isFile()
+                    ? Files.readAllLines(graphics.toPath(), StandardCharsets.UTF_8)
+                    : new ArrayList<>();
+            boolean seen = false;
+            boolean changed = false;
+            for (int i = 0; i < lines.size(); i++) {
+                String value = cleanLine(lines.get(i));
+                if (!value.startsWith("--gta4_extra_frames_in_flight=")) continue;
+                seen = true;
+                if (value.equals("--gta4_extra_frames_in_flight=0")) {
+                    lines.set(i, "--gta4_extra_frames_in_flight=4");
+                    changed = true;
+                }
+            }
+            if (!seen) {
+                lines.add("--gta4_extra_frames_in_flight=4");
+                changed = true;
+            }
+            if (changed) {
+                Files.write(graphics.toPath(), lines, StandardCharsets.UTF_8);
+                Log.i(TAG, "G925 2.28: enabled four additional run-ahead frames");
+            }
+            if (!marker.createNewFile() && !marker.exists()) {
+                Log.w(TAG, "could not mark the one-time run-ahead migration");
+            }
+        } catch (IOException exception) {
+            Log.w(TAG, "could not enable default run-ahead; leave saved settings unchanged",
+                    exception);
         }
     }
 
