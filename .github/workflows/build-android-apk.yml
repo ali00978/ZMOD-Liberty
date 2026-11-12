@@ -186,9 +186,7 @@ jobs:
         id: cache
         uses: actions/cache/restore@v4
         with:
-          path: |
-            out/build
-            out/host-tools
+          path: out/build
           key: android-${{ env.LIBERTY_GPU }}-${{ env.LIBERTY_CPU }}-${{ github.sha }}
           restore-keys: |
             android-${{ env.LIBERTY_GPU }}-${{ env.LIBERTY_CPU }}-
