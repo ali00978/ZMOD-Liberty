@@ -23,6 +23,7 @@
 #include "native_spirv_constant_range.h"
 #include "native_fixed_state_hash.h"
 #include "native_cpu_profile_scope.h"
+#include "native_fixed_state_validation_policy.h"
 #include "native_profile_shader_category.h"
 #include "modern_shader_options.h"
 #include "native_texture_image_identity.h"
@@ -31762,10 +31763,19 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
       QueueSurfaceImageRelease(release.resource);
       continue;
     }
+    // Drawing always applies the full captured fixed-function state. This is
+    // only a diagnostic cross-thread consistency hash, not a draw dependency.
+    // Reduce redundant serialization on ordinary 3500+ draw frames; keep
+    // exhaustive verification when debugging state corruption.
     if ((queued_command.type == CommandType::kDrawPrimitive ||
          queued_command.type == CommandType::kDrawPrimitiveUp ||
          queued_command.type == CommandType::kDrawIndexedPrimitive ||
          queued_command.type == CommandType::kClear) &&
+        ShouldVerifyRecordedFixedState(
+            REXCVAR_GET(gta4_validate_native_hot_caches) ||
+                REXCVAR_GET(gta4_trace_native_renderer) ||
+                REXCVAR_GET(gta4_native_gpu_breadcrumbs),
+            command_index) &&
         queued_command.recorded_fixed_function_state_hash !=
             HashFixedFunctionState(queued_command.fixed_function_state)) {
       REXLOG_ERROR(
