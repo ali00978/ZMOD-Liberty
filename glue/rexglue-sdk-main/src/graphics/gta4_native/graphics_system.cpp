@@ -3,6 +3,8 @@
 #include "core/font_atlas.h"
 #include "native_profile_labels.h"
 #include "graphics_system.h"
+#include "native_surface_retirement_scan.h"
+#include "native_color_clear_fastpath.h"
 #if defined(__ANDROID__)
 #include <android/log.h>
 #include <pthread.h>
@@ -22,6 +24,7 @@
 #include "native_spirv_constant_range.h"
 #include "native_fixed_state_hash.h"
 #include "native_cpu_profile_scope.h"
+#include "native_fixed_state_validation_policy.h"
 #include "native_profile_shader_category.h"
 #include "modern_shader_options.h"
 #include "native_texture_image_identity.h"
@@ -147,6 +150,9 @@ inline T RexRelaxedLoad(T& target) {
 #include "native_pipeline_recipe.h"
 #include "native_spirv_reflection.h"
 #include "native_stencil_volume_policy.h"
+#include "native_zero_coverage_draw.h"
+#include "native_rectangle_batch.h"
+#include "native_sequential_draw_merge.h"
 #include "hdr_present_ps.h"
 #include "native_msaa_policy.h"
 #include "native_resolve_policy.h"
@@ -354,6 +360,16 @@ REXCVAR_DEFINE_UINT32(gta4_native_debug_gpu_attribution, 0, "GTA IV/Graphics/Nat
 REXCVAR_DEFINE_BOOL(gta4_native_merge_indexed_draws, true, "GTA IV/Graphics/Native Renderer",
                     "Record consecutive indexed triangle-list draws with identical state and "
                     "adjacent index ranges as one draw");
+REXCVAR_DEFINE_BOOL(gta4_native_merge_sparse_indexed_draws, true,
+                    "GTA IV/Graphics/Native Renderer",
+                    "Batch 4+ nonadjacent opaque triangle-list draws with identical state "
+                    "as one indexed Vulkan draw using byte-identical index ranges");
+REXCVAR_DEFINE_BOOL(gta4_native_merge_sequential_draws, true, "GTA IV/Graphics/Native Renderer",
+                    "Merge consecutive nonindexed triangle-list draws that read exactly adjacent "
+                    "vertex ranges with the same immutable shader, resources and render state");
+REXCVAR_DEFINE_BOOL(gta4_native_merge_rectangle_draws, true, "GTA IV/Graphics/Native Renderer",
+                    "Draw multiple native Xenos RectangleList strips with one indexed Vulkan "
+                    "primitive-restart draw when vertex-index shaders and special paths are absent");
 REXCVAR_DEFINE_DOUBLE(gta4_native_depth_bias_constant_scale, 1.0, "GTA IV/Graphics/Native Renderer",
                       "Multiplier on the converted constant depth bias (diagnostics)");
 REXCVAR_DEFINE_DOUBLE(gta4_native_depth_bias_slope_scale, 1.0, "GTA IV/Graphics/Native Renderer",
@@ -379,12 +395,20 @@ REXCVAR_DEFINE_BOOL(gta4_native_lazy_resolves, false, "GTA IV/Graphics/Native Re
 REXCVAR_DEFINE_BOOL(gta4_native_keep_draw_state, true, "GTA IV/Graphics/Native Renderer",
                     "Keep the cached pipeline, descriptor and dynamic state across clears and "
                     "phase markers, which bind nothing");
+REXCVAR_DEFINE_BOOL(gta4_native_fold_color_clears, true, "GTA IV/Graphics/Native Renderer",
+                    "Use Vulkan attachment load-op CLEAR for full-area color clears when opening "
+                    "a new rendering scope, avoiding a separate GPU clear command");
+REXCVAR_DEFINE_BOOL(gta4_native_skip_empty_clears, true, "GTA IV/Graphics/Native Renderer",
+                    "Do not open a Vulkan rendering scope for a clear with zero pixel coverage");
 REXCVAR_DEFINE_BOOL(gta4_native_skip_repeated_clears, true, "GTA IV/Graphics/Native Renderer",
                     "Skip a clear when its attachments already hold that clear (same value, same "
                     "or larger rectangle) and nothing wrote them since");
 REXCVAR_DEFINE_BOOL(gta4_native_skip_invisible_draws, true, "GTA IV/Graphics/Native Renderer",
                     "Do not record draws that can change no pixel: no depth or stencil writes and "
                     "every written color target either masked off or blended as ZERO*src+ONE*dst");
+REXCVAR_DEFINE_BOOL(gta4_native_elide_zero_coverage_draws, true, "GTA IV/Graphics/Native Renderer",
+                    "Avoid submitting a GPU draw with an empty native guest scissor, unless "
+                    "an occlusion query, diagnostic probe or temporal side effect may observe it");
 REXCVAR_DEFINE_BOOL(gta4_native_empty_fragment, true, "GTA IV/Graphics/Native Renderer",
                     "Give pipelines without a pixel shader but with color attachments an empty "
                     "fragment shader instead of none");
@@ -514,7 +538,7 @@ REXCVAR_DEFINE_BOOL(
     "Discard prior resolve contents only for proven complete subresource overwrites")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 REXCVAR_DEFINE_BOOL(
-    gta4_trace_native_renderer, true, "GTA IV/Diagnostics",
+    gta4_trace_native_renderer, false, "GTA IV/Diagnostics",
     "Emit deterministic frame-correlated native renderer state, resource, draw, resolve, and "
     "presentation diagnostics");
 REXCVAR_DEFINE_BOOL(
@@ -2521,7 +2545,7 @@ VkPrimitiveTopology ConvertPrimitiveTopology(uint32_t primitive_type) {
 }
 
 constexpr uint32_t GetQuadListTriangleListIndexCount(uint32_t quad_list_index_count) {
-  return (quad_list_index_count / 4) * 6;
+  return NativeQuadIndexCount(quad_list_index_count);
 }
 
 uint32_t ConvertVertexUsageToLocation(uint8_t usage, uint8_t usage_index) {
@@ -3644,6 +3668,7 @@ void Gta4NativeGraphicsSystem::StageNativeFlightDescriptorSlot(NativeDescriptorS
 }
 
 void Gta4NativeGraphicsSystem::StageNativeTextureFlightResources(const NativeTextureImage& image) {
+  if (!IsNativeFlightRecorderEnabled()) return;
   const profile::CpuScope profile_scope(profile::CpuOp::kLifetimeBookkeeping);
 
   const uint32_t guest_handle = image.source ? image.source->handle : 0;
@@ -3669,6 +3694,7 @@ void Gta4NativeGraphicsSystem::StageNativeTextureFlightResources(const NativeTex
 }
 
 void Gta4NativeGraphicsSystem::StageNativeSurfaceFlightResources(const NativeSurfaceImage& image) {
+  if (!IsNativeFlightRecorderEnabled()) return;
   StageNativeFlightResource(NativeFlightResourceKind::kSurfaceImage,
                             NativeVulkanHandleIdentity(image.resource.image),
                             image.descriptor.handle, image.materialized_serial);
@@ -4565,6 +4591,7 @@ bool Gta4NativeGraphicsSystem::ValidateAndCopyCommand(const void* command, size_
     std::lock_guard lock(texture_resource_mutex_);
     const VirtualResourceRegistrationResult result =
         virtual_resource_registry_.Register(registration);
+    virtual_surface_registry_revision_.fetch_add(1, std::memory_order_release);
     ForgetTextureCapture(registration.resource);
     const NativeVirtualResourceRecord* record =
         virtual_resource_registry_.Find(registration.resource);
@@ -4659,6 +4686,7 @@ bool Gta4NativeGraphicsSystem::ValidateAndCopyCommand(const void* command, size_
       dirty_texture_handles_.erase(release.resource);
       vector_font_ids_.erase(release.resource);
       virtual_resource_registry_.Erase(release.resource);
+      virtual_surface_registry_revision_.fetch_add(1, std::memory_order_release);
       remaining_textures = texture_resources_.size();
     }
     {
@@ -5012,8 +5040,15 @@ bool Gta4NativeGraphicsSystem::ValidateAndCopyCommand(const void* command, size_
             DirtyStateComponentBit(DirtyStateComponent::kIntegerConstants);
       }
       native_command.fixed_function_state = DecodeFixedFunctionState(device_state);
+      // Full-state hashing is for diagnostics, never for draw or pipeline state.
       native_command.captured_fixed_function_state_hash =
-          HashFixedFunctionState(native_command.fixed_function_state);
+          ShouldCaptureRecordedFixedState(
+              REXCVAR_GET(gta4_validate_native_hot_caches),
+              CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeTrace),
+              CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeProbes),
+              REXCVAR_GET(gta4_native_gpu_breadcrumbs))
+              ? HashFixedFunctionState(native_command.fixed_function_state)
+              : 0;
     }
     for (uint32_t index = 0; index < kRenderTargetCount; ++index) {
       native_command.snapshot_render_targets[index] = CaptureSurfaceDescriptor(
@@ -6752,9 +6787,11 @@ void Gta4NativeGraphicsSystem::RenderWorkerMain() {
           texture_resources_.clear();
           dirty_texture_handles_.clear();
           virtual_resource_registry_.Clear();
+          virtual_surface_registry_revision_.fetch_add(1, std::memory_order_release);
           texture_resources_epoch_.fetch_add(1, std::memory_order_release);
         }
         reflection_resources_.clear();
+        surface_lookup_cache_.Invalidate();
         break;
       case CommandType::kRegisterShader: {
         RegisterShaderCommand register_shader;
@@ -6798,6 +6835,7 @@ void Gta4NativeGraphicsSystem::RenderWorkerMain() {
         target.sample_count_override = registration.sample_count_override;
         const size_t retired_aliases =
             RegisterNativeReflectionTarget(reflection_resources_, target);
+        surface_lookup_cache_.Invalidate();
         const NativeSurfaceImage* cached_surface = nullptr;
         for (const auto& image : native_surface_images_) {
           if (image->descriptor.handle == registration.surface) {
@@ -6878,6 +6916,7 @@ void Gta4NativeGraphicsSystem::RenderWorkerMain() {
         }
         const size_t retired_aliases =
             EraseNativeReflectionRegistration(reflection_resources_, release.resource);
+        surface_lookup_cache_.Invalidate();
         // Draws already queued ahead of Release still own the surface. If the
         // frame has not been submitted, defer retirement until the next real
         // submission instead of forcing an extra present at the release site.
@@ -6893,7 +6932,9 @@ void Gta4NativeGraphicsSystem::RenderWorkerMain() {
           pending_texture_release_generations_.insert(command.released_texture_generation);
         }
         if (current_frame_.empty() && !command_buffer_submission_) {
-          ReleasePendingSurfaceImages();
+          // No presentation callbacks may follow while idle: fully drain safe
+          // completed releases instead of leaving deferred resources resident.
+          ReleasePendingSurfaceImages(true);
         }
         if (retired_aliases &&
             CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeProbes)) {
@@ -7289,8 +7330,15 @@ void Gta4NativeGraphicsSystem::RenderWorkerMain() {
             command.type == CommandType::kDrawPrimitiveUp ||
             command.type == CommandType::kDrawIndexedPrimitive ||
             command.type == CommandType::kClear) {
+          // Do not serialize and hash every command in normal gameplay.
           command.recorded_fixed_function_state_hash =
-              HashFixedFunctionState(command.fixed_function_state);
+              ShouldCaptureRecordedFixedState(
+                  REXCVAR_GET(gta4_validate_native_hot_caches),
+                  CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeTrace),
+                  CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeProbes),
+                  REXCVAR_GET(gta4_native_gpu_breadcrumbs))
+                  ? HashFixedFunctionState(command.fixed_function_state)
+                  : 0;
           const uint32_t device = CommandDevice(command.type, command.bytes.data());
           if (!ApplyShaderConstantDelta(command, device)) {
             REXLOG_ERROR("gta4-native-constants: rejected worker command type={} device={:08X}",
@@ -7598,6 +7646,7 @@ void Gta4NativeGraphicsSystem::ApplyReleaseResourceEffects(const NativeReleaseEf
   }
   const size_t retired_aliases =
       EraseNativeReflectionRegistration(reflection_resources_, release.resource);
+  surface_lookup_cache_.Invalidate();
   if (effect.frame_was_empty) {
     QueueSurfaceImageRelease(release.resource);
   }
@@ -7605,7 +7654,7 @@ void Gta4NativeGraphicsSystem::ApplyReleaseResourceEffects(const NativeReleaseEf
     pending_texture_release_generations_.insert(effect.released_texture_generation);
   }
   if (effect.frame_was_empty && !command_buffer_submission_) {
-    ReleasePendingSurfaceImages();
+    ReleasePendingSurfaceImages(true);
   }
   if (retired_aliases && CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeProbes)) {
     REXLOG_INFO(
@@ -9617,6 +9666,7 @@ bool Gta4NativeGraphicsSystem::EnsureFrameConstantArenaCapacity() {
     }
     DestroyNativeUploadBuffer(arena.storage);
     arena.storage = replacement;
+    arena.shared_allocation_memo.Reset();
     arena.uploads.ResetStorage();
     // Reads from write-combined/uncached upload heaps can be very expensive.
     // Preserve full sequential writes if cached memory was unavailable.
@@ -9728,6 +9778,8 @@ bool Gta4NativeGraphicsSystem::ResetFrameConstantArena(uint32_t slot, uint64_t c
   }
   const bool index_reset = unsubmitted ? arena.index.ResetUnsubmitted()
                                        : arena.index.ResetAfterCompletion(completed_submission);
+  // Invalidate even if a later reset step fails after releasing reservations.
+  if (index_reset) arena.shared_allocation_memo.Reset();
   if (!index_reset || !arena.shared_versions.ResetGeneration() ||
       !ResetImmutableBindings(arena)) {
     return false;
@@ -17804,6 +17856,15 @@ bool Gta4NativeGraphicsSystem::EnsureFrameUploadCapacity(
           const VkDeviceSize rectangle_count = draw.vertex_count / 3;
           const VkDeviceSize expanded_size = rectangle_count * 4 * draw.stride;
           add_allocation(expanded_size, 16);
+          // Merged triangle strips need an index buffer containing four
+          // vertices per rectangle plus a restart marker between strips.
+          if (draw.vertex_count >= 6 && draw.vertex_count % 3 == 0) {
+            const uint32_t index_count =
+                NativeRectangleStripIndexCount(uint32_t(rectangle_count));
+            if (index_count)
+              add_allocation(VkDeviceSize(index_count) * sizeof(uint32_t),
+                             alignof(uint32_t));
+          }
         }
       }
       continue;
@@ -17816,14 +17877,14 @@ bool Gta4NativeGraphicsSystem::EnsureFrameUploadCapacity(
     const auto& state = *command.pipeline_state;
     const uint64_t declaration_hash = state.vertex_declaration_resource->content_hash;
     const uint64_t shader_hash = state.vertex_shader_resource->input_signature_hash;
-    std::array<bool, kVertexStreamCount> required_streams{};
+    uint32_t required_streams = 0;
     if (!persistent_direct_upload && !GetRequiredVertexStreams(state, required_streams)) {
       continue;
     }
     for (uint32_t stream = 0; stream < kVertexStreamCount; ++stream) {
       // Direct persistent uploads never consume the frame staging arena. Avoid
       // constructing and inserting planning keys whose sizes would be ignored.
-      if (persistent_direct_upload || !required_streams[stream]) {
+      if (persistent_direct_upload || !(required_streams & (1u << stream))) {
         continue;
       }
       const auto& resource = command.vertex_buffers[stream];
@@ -18051,6 +18112,15 @@ bool Gta4NativeGraphicsSystem::EnsureFrameUploadCapacityFast(
           const VkDeviceSize rectangle_count = draw.vertex_count / 3;
           const VkDeviceSize expanded_size = rectangle_count * 4 * draw.stride;
           add_allocation(expanded_size, 16);
+          // Merged triangle strips need an index buffer containing four
+          // vertices per rectangle plus a restart marker between strips.
+          if (draw.vertex_count >= 6 && draw.vertex_count % 3 == 0) {
+            const uint32_t index_count =
+                NativeRectangleStripIndexCount(uint32_t(rectangle_count));
+            if (index_count)
+              add_allocation(VkDeviceSize(index_count) * sizeof(uint32_t),
+                             alignof(uint32_t));
+          }
         }
       }
       continue;
@@ -18063,14 +18133,14 @@ bool Gta4NativeGraphicsSystem::EnsureFrameUploadCapacityFast(
     const auto& state = *command.pipeline_state;
     const uint64_t declaration_hash = state.vertex_declaration_resource->content_hash;
     const uint64_t shader_hash = state.vertex_shader_resource->input_signature_hash;
-    std::array<bool, kVertexStreamCount> required_streams{};
+    uint32_t required_streams = 0;
     if (!persistent_direct_upload && !GetRequiredVertexStreams(state, required_streams)) {
       continue;
     }
     for (uint32_t stream = 0; stream < kVertexStreamCount; ++stream) {
       // Direct persistent uploads never consume the frame staging arena. Avoid
       // constructing and inserting planning keys whose sizes would be ignored.
-      if (persistent_direct_upload || !required_streams[stream]) {
+      if (persistent_direct_upload || !(required_streams & (1u << stream))) {
         continue;
       }
       const auto& resource = command.vertex_buffers[stream];
@@ -19661,7 +19731,9 @@ bool Gta4NativeGraphicsSystem::PrepareFrameTextures(VkCommandBuffer command_buff
   uint32_t resolve_count = 0;
   uint32_t depth_handoff_count = 0;
   std::unordered_set<uint64_t> packed_alias_generations;
-  std::vector<NativeCommand*> texture_commands;
+  auto& texture_commands = frame_texture_commands_scratch_;
+  texture_commands.clear();
+  const auto clear_texture_scratch = MakeScopeExit([&] { texture_commands.clear(); });
   texture_commands.reserve(current_frame_.size());
   // The worker counted these while assembling; temporal prefilter draws are
   // added later on this thread, so frames with temporal output still walk.
@@ -20823,7 +20895,11 @@ void Gta4NativeGraphicsSystem::ReleaseUnusedBufferResources(uint32_t submitted_f
 
   constexpr uint64_t kBytesPerMiB = 1048576ull;
   const uint64_t cache_limit = uint64_t(kNativeBufferCacheLimitMiB) * kBytesPerMiB;
-  std::vector<Candidate> candidates;
+  // The bounded background sweep may resume on several consecutive title
+  // frames. Reuse the CPU-only candidate capacity per render worker rather
+  // than allocating an entire vector again on each continued sweep.
+  static thread_local std::vector<Candidate> candidates;
+  candidates.clear();
   uint64_t cache_bytes = 0;
   {
     std::lock_guard lock(buffer_resource_mutex_);
@@ -20853,7 +20929,9 @@ void Gta4NativeGraphicsSystem::ReleaseUnusedBufferResources(uint32_t submitted_f
 
   uint64_t reclaimed_bytes = 0;
   size_t reclaimed_resources = 0;
-  NativeWorkBudget buffer_reclamation(64, 16777216);
+  const auto reclamation_limit = GetNativeBufferReclamationWorkLimit(cache_bytes, cache_limit);
+  NativeWorkBudget buffer_reclamation(reclamation_limit.max_resources,
+                                      reclamation_limit.max_bytes);
   std::lock_guard lock(buffer_resource_mutex_);
   for (const Candidate& candidate : candidates) {
     const auto entry = buffer_resources_.find(candidate.handle);
@@ -20921,6 +20999,7 @@ void Gta4NativeGraphicsSystem::ReleaseUnusedBufferResources(uint32_t submitted_f
 }
 
 void Gta4NativeGraphicsSystem::DestroyNativeSurfaceImage(NativeSurfaceImage& image) {
+  surface_lookup_cache_.Invalidate();
   if (auto it = surface_images_by_handle_.find(image.descriptor.handle); it != surface_images_by_handle_.end()) {
     std::erase(it->second, &image);
     if (it->second.empty()) surface_images_by_handle_.erase(it);
@@ -20988,14 +21067,20 @@ void Gta4NativeGraphicsSystem::DestroyNativeSurfaceImage(NativeSurfaceImage& ima
 }
 
 void Gta4NativeGraphicsSystem::QueueSurfaceImageRelease(uint32_t handle) {
-  for (const auto& image : native_surface_images_) {
-    if (image && image->descriptor.handle == handle) {
+  surface_lookup_cache_.Invalidate();
+  // The creation/destruction paths already maintain this authoritative
+  // handle -> live-image index. Avoid scanning every scene surface when a
+  // single guest surface handle is released (the common transient case).
+  if (const auto found = surface_images_by_handle_.find(handle);
+      found != surface_images_by_handle_.end()) {
+    for (const NativeSurfaceImage* image : found->second) {
+      if (!image || image->descriptor.handle != handle) continue;
       pending_surface_release_ids_.insert(image->lifetime_id);
       if (NativeRendererEventTraceEnabled()) {
-      TraceNativeRendererEvent(
-          "surface-release-queued",
-          fmt::format("handle={:08X} lifetime={} last-submission={}", handle,
-                      image->lifetime_id, image->last_used_submission));
+        TraceNativeRendererEvent(
+            "surface-release-queued",
+            fmt::format("handle={:08X} lifetime={} last-submission={}", handle,
+                        image->lifetime_id, image->last_used_submission));
       }
     }
   }
@@ -21009,25 +21094,39 @@ void Gta4NativeGraphicsSystem::QueueSurfaceImageRelease(uint32_t handle) {
   }
 }
 
-void Gta4NativeGraphicsSystem::ReleasePendingSurfaceImages() {
+void Gta4NativeGraphicsSystem::ReleasePendingSurfaceImages(bool force_drain) {
   const profile::CpuPhaseScope profile_phase(profile::CpuPhase::kHousekeeping);
   const profile::CpuScope profile_scope(profile::CpuOp::kSurfaceRelease);
 
-  if (pending_surface_release_ids_.empty()) {
+  if (pending_surface_release_ids_.empty()) return;
+  if (native_surface_images_.empty()) {
+    surface_retirement_scan_cursor_ = 0;
     return;
   }
+
   size_t retired_surface_count = 0;
-  std::unordered_set<uint64_t> still_pending_ids;
-  for (auto image = native_surface_images_.begin(); image != native_surface_images_.end();) {
+  // Limit not only completed Vulkan destroys but also CPU searches across
+  // live surfaces. A deferred release at the end of a large scene used to
+  // require a full vector walk on every frame, even when only six resources
+  // could be retired. Resume from the last scan position to prevent starvation.
+  NativeSurfaceRetirementScan scan(native_surface_images_.size(),
+                                    surface_retirement_scan_cursor_, force_drain);
+  while (scan.HasNext(native_surface_images_.size()) &&
+         retired_surface_count < NativeSurfaceRetirementLimit(force_drain)) {
+    auto image = native_surface_images_.begin() + scan.index();
     if (!*image || !pending_surface_release_ids_.contains((*image)->lifetime_id)) {
-      ++image;
+      scan.Next(native_surface_images_.size(), false);
       continue;
     }
-    if ((*image)->last_used_submission > completed_command_buffer_submission_) {
-      still_pending_ids.insert((*image)->lifetime_id);
-      ++image;
+    // Keep GPU-flight lifetime checks unchanged. Pending identities remain
+    // invisible to draws, including when the search budget is exhausted.
+    if (ShouldKeepNativeSurfacePending((*image)->last_used_submission,
+                                       completed_command_buffer_submission_,
+                                       retired_surface_count, force_drain)) {
+      scan.Next(native_surface_images_.size(), false);
       continue;
     }
+    const uint64_t release_id = (*image)->lifetime_id;
     NativeSurfaceImage* retired_image = image->get();
     for (auto owner = native_placement_owners_.begin(); owner != native_placement_owners_.end();) {
       if (owner->second.image == retired_image) {
@@ -21037,22 +21136,38 @@ void Gta4NativeGraphicsSystem::ReleasePendingSurfaceImages() {
       }
     }
     DestroyNativeSurfaceImage(*retired_image);
-    image = native_surface_images_.erase(image);
+    native_surface_images_.erase(image);
+    pending_surface_release_ids_.erase(release_id);
+    // Vector erase shifts the next image into the erased index. Forced idle
+    // drains retain their whole-vector scan; only live title frames are capped.
+    scan.Next(native_surface_images_.size(), true);
     ++retired_surface_count;
   }
+  surface_retirement_scan_cursor_ = scan.index();
+
   if (retired_surface_count &&
       CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeProbes)) {
     REXLOG_INFO("gta4-native-surface-lifecycle: retired={} remaining={} placement-owners={}",
                 retired_surface_count, native_surface_images_.size(),
                 native_placement_owners_.size());
   }
-  pending_surface_release_ids_.swap(still_pending_ids);
 }
 
 Gta4NativeGraphicsSystem::NativeSurfaceImage* Gta4NativeGraphicsSystem::GetOrCreateSurfaceImage(
     const SurfaceDescriptor& descriptor, bool depth, VkSampleCountFlagBits host_sample_override,
     bool allow_allocation) {
   const profile::CpuScope profile_scope(profile::CpuOp::kSurfaceLookup);
+
+  const auto lookup_key = MakeNativeSurfaceLookupKey(descriptor, depth, uint32_t(host_sample_override));
+  const uint64_t registry_revision =
+      virtual_surface_registry_revision_.load(std::memory_order_acquire);
+  if (NativeSurfaceImage* image = surface_lookup_cache_.Find(lookup_key, registry_revision)) {
+    // A hit still participates in submission lifetime/flight tracking. Image
+    // layout, placement ownership and content materialization are not cached.
+    MarkNativeSurfaceImageUsed(*image);
+    AddNativeGpuProfileCounter(performance::Counter::kSurfaceLookupReuses);
+    return image;
+  }
 
   auto reject = [&descriptor, depth](const char* reason) -> NativeSurfaceImage* {
     static std::atomic<uint64_t> rejection_count{0};
@@ -21226,6 +21341,7 @@ Gta4NativeGraphicsSystem::NativeSurfaceImage* Gta4NativeGraphicsSystem::GetOrCre
               image->width, image->height, uint32_t(image->samples), image->ever_written);
         }
       }
+      surface_lookup_cache_.Store(lookup_key, registry_revision, image);
       return image;
     }
   }
@@ -21383,6 +21499,7 @@ Gta4NativeGraphicsSystem::NativeSurfaceImage* Gta4NativeGraphicsSystem::GetOrCre
       image_width, image_height, uint32_t(format), uint32_t(samples), is_reflection,
       uint32_t(reflection.family), uint32_t(reflection.role), result->logical_width,
       result->logical_height);
+  surface_lookup_cache_.Store(lookup_key, registry_revision, result);
   return result;
 }
 
@@ -21777,6 +21894,15 @@ void Gta4NativeGraphicsSystem::TryPrewarmDrawPipeline(const NativeCommand& comma
       std::memcpy(&draw, command.bytes.data(), sizeof(draw));
       primitive_type = draw.primitive_type;
       user_pointer_stride = draw.stride;
+      // Prewarm the same restart-enabled strip pipeline selected by the
+      // renderer when a RectangleList has two or more rectangles to merge.
+      primitive_restart_enable =
+          REXCVAR_GET(gta4_native_merge_rectangle_draws) &&
+          command.pipeline_state && command.pipeline_state->vertex_shader_resource &&
+          !command.pipeline_state->vertex_shader_resource->uses_vertex_index &&
+          draw.primitive_type == uint32_t(xenos::PrimitiveType::kRectangleList) &&
+          draw.vertex_count >= 6 && draw.vertex_count % 3 == 0 &&
+          NativeRectangleStripIndexCount(draw.vertex_count / 3) != 0;
       break;
     }
     case CommandType::kDrawIndexedPrimitive: {
@@ -22231,12 +22357,12 @@ VkPipeline Gta4NativeGraphicsSystem::GetOrCreatePipeline(
   if (user_pointer) {
     key.vertex_strides[0] = user_pointer_stride;
   } else {
-    std::array<bool, kVertexStreamCount> required_streams{};
+    uint32_t required_streams = 0;
     if (!GetRequiredVertexStreams(state, required_streams)) {
       return reject("vertex-stream-requirements");
     }
     for (uint32_t stream = 0; stream < kVertexStreamCount; ++stream) {
-      if (required_streams[stream]) {
+      if ((required_streams & (1u << stream))) {
         key.vertex_strides[stream] = state.vertex_streams[stream].stride;
       }
     }
@@ -22867,6 +22993,23 @@ VkPipeline Gta4NativeGraphicsSystem::GetOrCreatePipeline(
   return PublishNativePipeline(key, pipeline, 0);
 }
 
+const std::vector<uint8_t>& Gta4NativeGraphicsSystem::PrepareHostIndexData(
+    const NativeBufferResource& resource, bool index32) {
+  std::vector<uint8_t>& host_payload =
+      index32 ? resource.host_index32_payload : resource.host_index16_payload;
+  if (host_payload.empty()) {
+    host_payload.resize(resource.payload.size());
+    profile::CpuCall(profile::CpuOp::kIndexConvert, [&] { return CopyGuestIndicesToHost(host_payload.data(), resource.payload.data(),
+                           resource.payload.size(), index32); });
+    RecordNativeMemoryLifecycle(
+        memory::ResourceKind::kIndexConversion, memory::LifecycleAction::kCreate,
+        memory::LifecycleReason::kCacheMiss, resource.handle, resource.generation,
+        resource.handle, host_payload.size(), host_payload.capacity(), 0, active_texture_frame_,
+        index32 ? 32 : 16);
+  }
+  return host_payload;
+}
+
 bool Gta4NativeGraphicsSystem::UploadBufferResource(
     const std::shared_ptr<const NativeBufferResource>& resource, VkCommandBuffer command_buffer,
     bool index_buffer, bool index32, const NativePipelineState* vertex_state,
@@ -22905,18 +23048,7 @@ bool Gta4NativeGraphicsSystem::UploadBufferResource(
       allocation = *existing;
       return true;
     }
-    std::vector<uint8_t>& host_payload =
-        index32 ? resource->host_index32_payload : resource->host_index16_payload;
-    if (host_payload.empty()) {
-      host_payload.resize(resource->payload.size());
-      profile::CpuCall(profile::CpuOp::kIndexConvert, [&] { return CopyGuestIndicesToHost(host_payload.data(), resource->payload.data(),
-                             resource->payload.size(), index32); });
-      RecordNativeMemoryLifecycle(
-          memory::ResourceKind::kIndexConversion, memory::LifecycleAction::kCreate,
-          memory::LifecycleReason::kCacheMiss, resource->handle, resource->generation,
-          resource->handle, host_payload.size(), host_payload.capacity(), 0, active_texture_frame_,
-          index32 ? 32 : 16);
-    }
+    const auto& host_payload = PrepareHostIndexData(*resource, index32);
     NativePersistentBufferKey persistent_key{};
     persistent_key.generation = resource->generation;
     persistent_key.kind =
@@ -23532,8 +23664,13 @@ bool Gta4NativeGraphicsSystem::BindCommonDrawState(
     constant_arena.last_shared_key = shared_key;
     constant_arena.last_shared_identity = *shared_identity;
   }
-  if (!FindFrameConstantBuffer(NativeConstantBufferKind::kShared, *shared_identity,
-                               shared_constants_allocation)) {
+  const NativeUploadAllocation* remembered_allocation =
+      REXCVAR_GET(gta4_native_shared_key_memo)
+          ? constant_arena.shared_allocation_memo.Find(*shared_identity) : nullptr;
+  if (remembered_allocation) {
+    shared_constants_allocation = *remembered_allocation;
+  } else if (!FindFrameConstantBuffer(NativeConstantBufferKind::kShared, *shared_identity,
+                                      shared_constants_allocation)) {
     NativeSharedConstants shared_constants{};
     shared_constants.modern_effects = BuildModernEffectConstants(
         shared_key.modern_effects_enabled, shared_key.tone_lut_address, command.environmental_data.get());
@@ -23601,6 +23738,10 @@ bool Gta4NativeGraphicsSystem::BindCommonDrawState(
     }
   }
 
+  if (!remembered_allocation) {
+    constant_arena.shared_allocation_memo.Store(*shared_identity, shared_constants_allocation);
+  }
+
   static const bool trace_glass_output = [] {
     const char* value = std::getenv("REX_GTA4_GLASS_OUTPUT_TRACE");
     return value && value[0] == '1';
@@ -23653,7 +23794,8 @@ bool Gta4NativeGraphicsSystem::BindCommonDrawState(
 #if REX_PLATFORM_ANDROID
   if (pipeline_stats_.ready()) pipeline_stats_.Observe(pipeline);
 #endif
-  if (native_draw_state_cache_.UpdatePipeline(NativeVulkanHandleIdentity(pipeline))) {
+  if (native_draw_state_cache_.UpdatePipeline(
+          NativeVulkanHandleIdentity(pipeline), /*all_tracked_state_dynamic=*/true)) {
     profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return dfn.vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline); });
   }
   std::array<uint64_t, kDescriptorSetCount> descriptor_identities{};
@@ -23666,41 +23808,26 @@ bool Gta4NativeGraphicsSystem::BindCommonDrawState(
                                 draw_pipeline_layout, 0, kDescriptorSetCount,
                                 draw_descriptor_sets.data(), 0, nullptr); });
   }
-  const float viewport_scale_x = logical_width ? float(width) / float(logical_width) : 1.0f;
-  const float viewport_scale_y = logical_height ? float(height) / float(logical_height) : 1.0f;
-  const NativeViewportSelection viewport_selection = SelectNativeViewport(
-      {requested_viewport_x, requested_viewport_y, requested_viewport_width,
-       requested_viewport_height, requested_min_depth, requested_max_depth},
-      viewport_scale_x, viewport_scale_y, width, height,
-      vulkan_provider->vulkan_device()->properties());
+  const auto& raster_limits = vulkan_provider->vulkan_device()->properties();
+  const NativeRasterAreaKey raster_key{
+      fixed.viewport_bits, fixed.scissor, width, height, logical_width, logical_height,
+      {raster_limits.maxViewportDimensions[0], raster_limits.maxViewportDimensions[1]},
+      {std::bit_cast<uint32_t>(raster_limits.viewportBoundsRange[0]),
+       std::bit_cast<uint32_t>(raster_limits.viewportBoundsRange[1])},
+      REXCVAR_GET(gta4_native_debug_gpu_attribution) == 1};
+  const NativeRasterArea& raster_area = native_raster_area_memo_.Get(
+      raster_key, [&] { return ComputeNativeRasterArea(raster_key); });
+  const NativeViewportSelection& viewport_selection = raster_area.viewport;
   const VkViewport& viewport = viewport_selection.viewport;
+  const float viewport_scale_x = raster_area.scale_x;
+  const float viewport_scale_y = raster_area.scale_y;
   if (native_draw_state_cache_.UpdateViewport(
           {std::bit_cast<uint32_t>(viewport.x), std::bit_cast<uint32_t>(viewport.y),
            std::bit_cast<uint32_t>(viewport.width), std::bit_cast<uint32_t>(viewport.height),
            std::bit_cast<uint32_t>(viewport.minDepth), std::bit_cast<uint32_t>(viewport.maxDepth)})) {
     profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetViewport(command_buffer, 0, 1, &viewport); });
   }
-  VkRect2D scissor{};
-  // GTA IV's XDK setters already intersect the D3D scissor and viewport and
-  // write the final PA_SC_WINDOW_SCISSOR rectangle. Replay that authoritative
-  // hardware result instead of rebuilding the intersection from API shadows.
-  const int32_t logical_left =
-      std::clamp(fixed.scissor[0], int32_t(0), int32_t(logical_width));
-  const int32_t logical_top =
-      std::clamp(fixed.scissor[1], int32_t(0), int32_t(logical_height));
-  const int32_t logical_right =
-      std::clamp(fixed.scissor[2], logical_left, int32_t(logical_width));
-  const int32_t logical_bottom =
-      std::clamp(fixed.scissor[3], logical_top, int32_t(logical_height));
-  const int32_t left = ScaleCoordinateFloor(logical_left, logical_width, width);
-  const int32_t top = ScaleCoordinateFloor(logical_top, logical_height, height);
-  const int32_t right = ScaleCoordinateCeil(logical_right, logical_width, width);
-  const int32_t bottom = ScaleCoordinateCeil(logical_bottom, logical_height, height);
-  scissor.offset = {left, top};
-  scissor.extent = {uint32_t(right - left), uint32_t(bottom - top)};
-  if (viewport_selection.empty || REXCVAR_GET(gta4_native_debug_gpu_attribution) == 1) {
-    scissor = {};
-  }
+  const VkRect2D& scissor = raster_area.scissor;
   if (native_draw_state_cache_.UpdateScissor(
           {scissor.offset.x, scissor.offset.y, scissor.extent.width, scissor.extent.height})) {
     profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetScissor(command_buffer, 0, 1, &scissor); });
@@ -23774,37 +23901,24 @@ bool Gta4NativeGraphicsSystem::BindCommonDrawState(
   }
   const NativeStencilMaskRefState& effective_back_stencil =
       stencil_mask_ref.use_separate_faces ? stencil_mask_ref.back : stencil_mask_ref.front;
-  if (native_draw_state_cache_.UpdateStencil(
-          {stencil_mask_ref.front.reference, stencil_mask_ref.front.compare_mask,
-           stencil_mask_ref.front.write_mask, effective_back_stencil.reference,
-           effective_back_stencil.compare_mask, effective_back_stencil.write_mask})) {
-    if (stencil_mask_ref.use_separate_faces) {
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilReference(command_buffer, VK_STENCIL_FACE_FRONT_BIT,
-                                   stencil_mask_ref.front.reference); });
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilReference(command_buffer, VK_STENCIL_FACE_BACK_BIT,
-                                   stencil_mask_ref.back.reference); });
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilCompareMask(command_buffer, VK_STENCIL_FACE_FRONT_BIT,
-                                     stencil_mask_ref.front.compare_mask); });
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilCompareMask(command_buffer, VK_STENCIL_FACE_BACK_BIT,
-                                     stencil_mask_ref.back.compare_mask); });
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilWriteMask(command_buffer, VK_STENCIL_FACE_FRONT_BIT,
-                                   stencil_mask_ref.front.write_mask); });
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilWriteMask(command_buffer, VK_STENCIL_FACE_BACK_BIT,
-                                   stencil_mask_ref.back.write_mask); });
-    } else {
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilReference(command_buffer, VK_STENCIL_FACE_FRONT_AND_BACK,
-                                   stencil_mask_ref.front.reference); });
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilCompareMask(command_buffer, VK_STENCIL_FACE_FRONT_AND_BACK,
-                                     stencil_mask_ref.front.compare_mask); });
-      profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] { return dfn.vkCmdSetStencilWriteMask(command_buffer, VK_STENCIL_FACE_FRONT_AND_BACK,
-                                   stencil_mask_ref.front.write_mask); });
-    }
-  }
-  const NativeBlendConstantSelection blend_constants = SelectNativeBlendConstants(
-      fixed.blend_controls, NativeBlendWriteMask(target.color_write_mask, target.color_formats),
-      fixed.blend_constants,
-      !vulkan_provider->vulkan_device()->properties().portabilitySubset ||
-          vulkan_provider->vulkan_device()->properties().constantAlphaColorBlendFactors);
+  native_draw_state_cache_.EmitStencilChanges(
+      {stencil_mask_ref.front.reference, stencil_mask_ref.front.compare_mask,
+       stencil_mask_ref.front.write_mask, effective_back_stencil.reference,
+       effective_back_stencil.compare_mask, effective_back_stencil.write_mask},
+      [&](size_t field, bool front, bool back, uint32_t value) {
+        const VkStencilFaceFlags faces =
+            (front ? VK_STENCIL_FACE_FRONT_BIT : 0) | (back ? VK_STENCIL_FACE_BACK_BIT : 0);
+        profile::CpuCall(profile::CpuOp::kDriverDynamic, [&] {
+          if (field == 0) dfn.vkCmdSetStencilReference(command_buffer, faces, value);
+          else if (field == 1) dfn.vkCmdSetStencilCompareMask(command_buffer, faces, value);
+          else dfn.vkCmdSetStencilWriteMask(command_buffer, faces, value);
+        });
+      });
+  const bool constant_alpha_supported = !raster_limits.portabilitySubset ||
+                                         raster_limits.constantAlphaColorBlendFactors;
+  const NativeBlendConstantSelection blend_constants = SelectNativeDrawBlendConstants(
+      fixed.blend_controls, target.color_write_mask, target.color_formats,
+      fixed.blend_constants, constant_alpha_supported);
   if (!blend_constants.representable) {
     return false;
   }
@@ -23958,7 +24072,7 @@ bool Gta4NativeGraphicsSystem::RecordPrimitiveUpBatch(
   const VkDeviceSize default_vertex_offset = 0;
   BindNativeVertexBuffer(command_buffer, kDefaultVertexBinding, default_vertex_buffer, default_vertex_offset);
   BindNativeVertexBuffer(command_buffer, 0, vertices.buffer, vertices.offset);
-  dfn.vkCmdBindIndexBuffer(command_buffer, indices.buffer, indices.offset, VK_INDEX_TYPE_UINT32);
+  BindNativeIndexBuffer(command_buffer, indices.buffer, indices.offset, VK_INDEX_TYPE_UINT32);
   ObserveNativeGpuProfileDraw(first, pipeline, target.samples, 0, uint32_t(index_count));
   if (REXCVAR_GET(gta4_native_debug_gpu_attribution) != 2) dfn.vkCmdDrawIndexed(command_buffer, uint32_t(index_count), 1, 0, 0, 0);
   TraceModernShaderDraw(first, target);
@@ -23995,7 +24109,23 @@ bool Gta4NativeGraphicsSystem::RecordPrimitiveUp(VkCommandBuffer command_buffer,
     return fail("zero-count-or-stride");
   }
 
-  VkPipeline pipeline = GetOrCreateDrawPipeline(command, draw.primitive_type, target, draw.stride);
+  // A RectangleList's three guest corners are expanded into four native
+  // vertices per rectangle. Previously each rectangle required a separate
+  // vkCmdDraw(4). With strip-restart, the exact same triangles become ONE
+  // vkCmdDrawIndexed without dropping or reordering any visible geometry.
+  bool merge_rectangles =
+      REXCVAR_GET(gta4_native_merge_rectangle_draws) && !target.temporal_shader &&
+      command.pipeline_state->vertex_shader_resource &&
+      !command.pipeline_state->vertex_shader_resource->uses_vertex_index &&
+      draw.primitive_type == uint32_t(xenos::PrimitiveType::kRectangleList) &&
+      draw.vertex_count >= 6 && draw.vertex_count % 3 == 0 &&
+      NativeRectangleStripIndexCount(draw.vertex_count / 3) != 0;
+  VkPipeline pipeline = GetOrCreateDrawPipeline(
+      command, draw.primitive_type, target, draw.stride, merge_rectangles);
+  if (!pipeline && merge_rectangles) {
+    merge_rectangles = false;
+    pipeline = GetOrCreateDrawPipeline(command, draw.primitive_type, target, draw.stride);
+  }
   NativeUploadAllocation vertex_allocation;
   if (!pipeline) {
     return fail("pipeline");
@@ -24157,11 +24287,14 @@ bool Gta4NativeGraphicsSystem::RecordPrimitiveUp(VkCommandBuffer command_buffer,
   uint32_t host_vertex_count = draw.vertex_count;
   NativeUploadAllocation quad_list_indices;
   uint32_t quad_list_index_count = 0;
+  NativeUploadAllocation rectangle_list_indices{};
+  uint32_t rectangle_list_index_count = 0;
   if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kRectangleList)) {
     if (!command.pipeline_state->vertex_declaration_resource || draw.vertex_count % 3) {
       return fail("rectangle-list-layout");
     }
     const uint32_t rectangle_count = draw.vertex_count / 3;
+    if (rectangle_count > UINT32_MAX / 4) return fail("rectangle-count-overflow");
     host_vertex_count = rectangle_count * 4;
     const uint64_t expanded_size = uint64_t(host_vertex_count) * uint64_t(draw.stride);
     if (!expanded_size || expanded_size > kMaximumUpPayloadSize) {
@@ -24249,6 +24382,21 @@ bool Gta4NativeGraphicsSystem::RecordPrimitiveUp(VkCommandBuffer command_buffer,
       }
     }
     vertex_allocation = expanded_allocation;
+    if (merge_rectangles) {
+      const uint32_t indices_count = NativeRectangleStripIndexCount(rectangle_count);
+      const VkDeviceSize bytes = VkDeviceSize(indices_count) * sizeof(uint32_t);
+      if (indices_count &&
+          AllocateUpload(bytes, alignof(uint32_t), rectangle_list_indices,
+                         NativeUploadKind::kIndex) &&
+          WriteNativeRectangleStripIndices(
+              {reinterpret_cast<uint32_t*>(rectangle_list_indices.mapping),
+               size_t(indices_count)}, rectangle_count)) {
+        rectangle_list_index_count = indices_count;
+      }
+      // If the additional upload is unavailable, the restart-enabled
+      // triangle-strip pipeline can still issue the original nonindexed
+      // per-rectangle draws: no geometry is discarded on an allocation miss.
+    }
   } else if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kQuadList)) {
     if (draw.vertex_count % 4) {
       return fail("quad-list-count");
@@ -24285,12 +24433,28 @@ bool Gta4NativeGraphicsSystem::RecordPrimitiveUp(VkCommandBuffer command_buffer,
   profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return BindNativeVertexBuffer(command_buffer, 0, vertex_buffer, vertex_offset); });
   if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kRectangleList)) {
     const uint32_t rectangle_count = host_vertex_count / 4;
-    for (uint32_t rectangle = 0; rectangle < rectangle_count; ++rectangle) {
-      ObserveNativeGpuProfileDraw(command, pipeline, target.samples, 4, 0);
-      profile::CpuCall(profile::CpuOp::kDriverDraw, [&] { if (!REXCVAR_GET(gta4_native_debug_gpu_attribution) || REXCVAR_GET(gta4_native_debug_gpu_attribution) == 1) dfn.vkCmdDraw(command_buffer, 4, 1, rectangle * 4, 0); });
+    if (rectangle_list_index_count) {
+      profile::CpuCall(profile::CpuOp::kDriverBind, [&] {
+        return BindNativeIndexBuffer(command_buffer, rectangle_list_indices.buffer,
+                                     rectangle_list_indices.offset, VK_INDEX_TYPE_UINT32);
+      });
+      ObserveNativeGpuProfileDraw(command, pipeline, target.samples, 0,
+                                  rectangle_list_index_count);
+      profile::CpuCall(profile::CpuOp::kDriverDraw, [&] {
+        if (REXCVAR_GET(gta4_native_debug_gpu_attribution) != 2) {
+          dfn.vkCmdDrawIndexed(command_buffer, rectangle_list_index_count, 1, 0, 0, 0);
+          AddNativeGpuProfileCounter(performance::Counter::kRectangleDrawsMerged,
+                                    rectangle_count - 1);
+        }
+      });
+    } else {
+      for (uint32_t rectangle = 0; rectangle < rectangle_count; ++rectangle) {
+        ObserveNativeGpuProfileDraw(command, pipeline, target.samples, 4, 0);
+        profile::CpuCall(profile::CpuOp::kDriverDraw, [&] { if (!REXCVAR_GET(gta4_native_debug_gpu_attribution) || REXCVAR_GET(gta4_native_debug_gpu_attribution) == 1) dfn.vkCmdDraw(command_buffer, 4, 1, rectangle * 4, 0); });
+      }
     }
   } else if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kQuadList)) {
-    profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return dfn.vkCmdBindIndexBuffer(command_buffer, quad_list_indices.buffer, quad_list_indices.offset,
+    profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return BindNativeIndexBuffer(command_buffer, quad_list_indices.buffer, quad_list_indices.offset,
                              VK_INDEX_TYPE_UINT32); });
     ObserveNativeGpuProfileDraw(command, pipeline, target.samples, 0, quad_list_index_count);
     profile::CpuCall(profile::CpuOp::kDriverDraw, [&] { if (!REXCVAR_GET(gta4_native_debug_gpu_attribution) || REXCVAR_GET(gta4_native_debug_gpu_attribution) == 1) dfn.vkCmdDrawIndexed(command_buffer, quad_list_index_count, 1, 0, 0, 0); });
@@ -24302,7 +24466,7 @@ bool Gta4NativeGraphicsSystem::RecordPrimitiveUp(VkCommandBuffer command_buffer,
     if (!AllocateUpload(count * sizeof(uint32_t), alignof(uint32_t), indices, NativeUploadKind::kIndex) ||
         !WriteNativeSequentialFan({reinterpret_cast<uint32_t*>(indices.mapping), size_t(count)},
                                   host_vertex_count)) return fail("triangle-fan-upload");
-    dfn.vkCmdBindIndexBuffer(command_buffer, indices.buffer, indices.offset, VK_INDEX_TYPE_UINT32);
+    BindNativeIndexBuffer(command_buffer, indices.buffer, indices.offset, VK_INDEX_TYPE_UINT32);
     ObserveNativeGpuProfileDraw(command, pipeline, target.samples, 0, uint32_t(count));
     if (REXCVAR_GET(gta4_native_debug_gpu_attribution) != 2) dfn.vkCmdDrawIndexed(command_buffer, uint32_t(count), 1, 0, 0, 0);
   } else {
@@ -24314,30 +24478,32 @@ bool Gta4NativeGraphicsSystem::RecordPrimitiveUp(VkCommandBuffer command_buffer,
 }
 
 bool Gta4NativeGraphicsSystem::GetRequiredVertexStreams(
-    const NativePipelineState& state,
-    std::array<bool, kVertexStreamCount>& required_streams) const {
-  required_streams.fill(false);
-  if (!state.vertex_shader_resource || !state.vertex_declaration_resource) {
-    return false;
+    const NativePipelineState& state, uint32_t& required_streams) {
+  static_assert(kVertexStreamCount <= 32);
+  required_streams = 0;
+  if (!state.vertex_shader_resource || !state.vertex_declaration_resource) return false;
+  const NativeVertexStreamKey key{state.vertex_shader_resource,
+      state.vertex_declaration_resource.get(), state.vertex_shader_resource->input_signature_hash,
+      state.vertex_declaration_resource->content_hash};
+  if (const auto* cached = state.vertex_stream_memo.Find(key)) {
+    required_streams = cached->mask;
+    AddNativeGpuProfileCounter(performance::Counter::kVertexLayoutReuses);
+    return cached->valid;
   }
-
   for (const NativeVertexInput& shader_input : state.vertex_shader_resource->vertex_inputs) {
-    const VertexElement* matching_element = nullptr;
     for (const VertexElement& element : state.vertex_declaration_resource->elements) {
-      if (ConvertVertexUsageToLocation(element.usage, element.usage_index) ==
-          shader_input.location) {
-        matching_element = &element;
-        break;
+      if (ConvertVertexUsageToLocation(element.usage, element.usage_index) != shader_input.location)
+        continue;
+      if (element.stream >= kVertexStreamCount) {
+        state.vertex_stream_memo.Store(key, {0, false});
+        required_streams = 0;
+        return false;
       }
+      required_streams |= 1u << element.stream;
+      break;
     }
-    if (!matching_element) {
-      continue;
-    }
-    if (matching_element->stream >= kVertexStreamCount) {
-      return false;
-    }
-    required_streams[matching_element->stream] = true;
   }
+  state.vertex_stream_memo.Store(key, {required_streams, true});
   return true;
 }
 
@@ -24365,6 +24531,7 @@ bool Gta4NativeGraphicsSystem::RecordPrimitive(VkCommandBuffer command_buffer,
   }
   DrawPrimitiveCommand draw{};
   std::memcpy(&draw, command.bytes.data(), sizeof(draw));
+  if (primitive_merge_count_override_) draw.vertex_count = primitive_merge_count_override_;
   if (!draw.vertex_count) {
     return fail("zero-count");
   }
@@ -24383,14 +24550,12 @@ bool Gta4NativeGraphicsSystem::RecordPrimitive(VkCommandBuffer command_buffer,
   const VkBuffer upload_buffer = upload_buffer_.buffer;
   const VkDeviceSize default_vertex_offset = 0;
   profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return BindNativeVertexBuffer(command_buffer, kDefaultVertexBinding, upload_buffer, default_vertex_offset); });
-  std::array<bool, kVertexStreamCount> required_streams{};
+  uint32_t required_streams = 0;
   if (!GetRequiredVertexStreams(*command.pipeline_state, required_streams)) {
     return fail("vertex-input-layout");
   }
-  for (uint32_t stream = 0; stream < kVertexStreamCount; ++stream) {
-    if (!required_streams[stream]) {
-      continue;
-    }
+  for (uint32_t remaining = required_streams; remaining; remaining &= remaining - 1) {
+    const uint32_t stream = std::countr_zero(remaining);
     const auto& stream_state = command.pipeline_state->vertex_streams[stream];
     const auto& resource = command.vertex_buffers[stream];
     if (!stream_state.stride || !resource || stream_state.offset >= resource->payload.size()) {
@@ -24444,7 +24609,7 @@ bool Gta4NativeGraphicsSystem::RecordPrimitive(VkCommandBuffer command_buffer,
       *(indices++) = vertex + 2;
       *(indices++) = vertex + 3;
     }
-    profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return dfn.vkCmdBindIndexBuffer(command_buffer, indices_allocation.buffer, indices_allocation.offset,
+    profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return BindNativeIndexBuffer(command_buffer, indices_allocation.buffer, indices_allocation.offset,
                              VK_INDEX_TYPE_UINT32); });
     ObserveNativeGpuProfileDraw(command, pipeline, target.samples, 0, index_count);
     profile::CpuCall(profile::CpuOp::kDriverDraw, [&] { if (!REXCVAR_GET(gta4_native_debug_gpu_attribution) || REXCVAR_GET(gta4_native_debug_gpu_attribution) == 1) dfn.vkCmdDrawIndexed(command_buffer, index_count, 1, 0, int32_t(draw.start_vertex), 0); });
@@ -24456,7 +24621,7 @@ bool Gta4NativeGraphicsSystem::RecordPrimitive(VkCommandBuffer command_buffer,
     if (!AllocateUpload(count * sizeof(uint32_t), alignof(uint32_t), indices, NativeUploadKind::kIndex) ||
         !WriteNativeSequentialFan({reinterpret_cast<uint32_t*>(indices.mapping), size_t(count)},
                                   draw.vertex_count, draw.start_vertex)) return fail("triangle-fan-upload");
-    dfn.vkCmdBindIndexBuffer(command_buffer, indices.buffer, indices.offset, VK_INDEX_TYPE_UINT32);
+    BindNativeIndexBuffer(command_buffer, indices.buffer, indices.offset, VK_INDEX_TYPE_UINT32);
     ObserveNativeGpuProfileDraw(command, pipeline, target.samples, 0, uint32_t(count));
     if (REXCVAR_GET(gta4_native_debug_gpu_attribution) != 2) dfn.vkCmdDrawIndexed(command_buffer, uint32_t(count), 1, 0, 0, 0);
   } else {
@@ -24465,6 +24630,17 @@ bool Gta4NativeGraphicsSystem::RecordPrimitive(VkCommandBuffer command_buffer,
   }
   TraceModernShaderDraw(command, target);
   return true;
+}
+
+void Gta4NativeGraphicsSystem::BindNativeIndexBuffer(VkCommandBuffer command_buffer,
+                                                     VkBuffer buffer, VkDeviceSize offset,
+                                                     VkIndexType index_type) {
+  if (!native_draw_state_cache_.UpdateIndexBuffer(
+          NativeVulkanHandleIdentity(command_buffer), NativeVulkanHandleIdentity(buffer),
+          uint64_t(offset), uint32_t(index_type))) return;
+  auto* vulkan_provider = static_cast<ui::vulkan::VulkanProvider*>(provider_.get());
+  vulkan_provider->vulkan_device()->functions().vkCmdBindIndexBuffer(
+      command_buffer, buffer, offset, index_type);
 }
 
 void Gta4NativeGraphicsSystem::BindNativeVertexBuffer(VkCommandBuffer command_buffer,
@@ -24505,9 +24681,14 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
   if (!command.pipeline_state || !command.index_buffer || !command.shader_state) {
     return fail("command-state-or-index");
   }
+  const bool sparse_batch = sparse_indexed_range_count_ >= 4;
   DrawIndexedPrimitiveCommand draw{};
   std::memcpy(&draw, command.bytes.data(), sizeof(draw));
-  if (indexed_merge_count_override_) draw.index_count = indexed_merge_count_override_;
+  if (indexed_merge_count_override_ && !sparse_batch)
+    draw.index_count = indexed_merge_count_override_;
+  if (sparse_batch &&
+      draw.primitive_type != uint32_t(xenos::PrimitiveType::kTriangleList))
+    return fail("sparse-primitive-type");
   if (!draw.index_count) {
     return fail("zero-index-count");
   }
@@ -24535,14 +24716,12 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
   const VkBuffer upload_buffer = upload_buffer_.buffer;
   const VkDeviceSize default_vertex_offset = 0;
   profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return BindNativeVertexBuffer(command_buffer, kDefaultVertexBinding, upload_buffer, default_vertex_offset); });
-  std::array<bool, kVertexStreamCount> required_streams{};
+  uint32_t required_streams = 0;
   if (!GetRequiredVertexStreams(*command.pipeline_state, required_streams)) {
     return fail("vertex-input-layout");
   }
-  for (uint32_t stream = 0; stream < kVertexStreamCount; ++stream) {
-    if (!required_streams[stream]) {
-      continue;
-    }
+  for (uint32_t remaining = required_streams; remaining; remaining &= remaining - 1) {
+    const uint32_t stream = std::countr_zero(remaining);
     const auto& stream_state = command.pipeline_state->vertex_streams[stream];
     const auto& resource = command.vertex_buffers[stream];
     if (!stream_state.stride || !resource || stream_state.offset >= resource->payload.size()) {
@@ -24575,35 +24754,52 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
   if (required_size > command.index_buffer->payload.size()) {
     return fail("index-bounds");
   }
-  NativeUploadAllocation index_allocation;
-  if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kTriangleFan)) {
-    auto& host = index32 ? command.index_buffer->host_index32_payload
-                         : command.index_buffer->host_index16_payload;
-    if (host.empty()) {
-      host.resize(command.index_buffer->payload.size());
-      CopyGuestIndicesToHost(host.data(), command.index_buffer->payload.data(), host.size(), index32);
-    }
-    // The original fan is a CPU input, not a second GPU index buffer.
-    index_allocation.host_data = host.data();
-  } else if (!UploadBufferResource(command.index_buffer, command_buffer, true, index32, nullptr, 0,
-                                   resources, index_allocation)) {
-    return fail("index-upload");
-  }
-
+  // Ordinary indexed draws can reuse an existing GPU index buffer and never
+  // read its CPU copy. Only decode host indices for fan/quad/restart conversion,
+  // vertex-cache preprocessing, MoltenVK repair or explicitly enabled diagnostics.
+  // The buffer's generation and GPU lifetime remain owned by UploadBufferResource.
+  const std::vector<uint8_t>* prepared_host_indices = nullptr;
+  const auto& cpu_indices = [&]() -> const std::vector<uint8_t>& {
+    if (!prepared_host_indices)
+      prepared_host_indices = &PrepareHostIndexData(*command.index_buffer, index32);
+    return *prepared_host_indices;
+  };
+  const auto original_index_bytes = [&]() -> const uint8_t* {
+    return cpu_indices().data() + size_t(draw.start_index) * size_t(element_size);
+  };
   NativeUploadAllocation quad_list_indices;
   NativeUploadAllocation primitive_restart_indices;
   std::shared_ptr<const std::vector<uint8_t>> fan_indices;
-  const uint8_t* selected_index_bytes =
-      index_allocation.host_data + size_t(draw.start_index) * size_t(element_size);
+  const uint8_t* selected_index_bytes = nullptr;
   uint32_t host_index_count = draw.index_count;
   uint32_t host_start_index = draw.start_index;
-  VkBuffer host_index_buffer = index_allocation.buffer;
-  VkDeviceSize host_index_offset = index_allocation.offset;
-  if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kTriangleFan)) {
+  VkBuffer host_index_buffer = VK_NULL_HANDLE;
+  VkDeviceSize host_index_offset = 0;
+  if (sparse_batch) {
+    const std::span<const NativeSparseIndexRange> ranges(
+        sparse_indexed_ranges_.data(), sparse_indexed_range_count_);
+    const uint32_t total = NativeSparseTriangleIndexCount(
+        ranges, command.index_buffer->payload.size() / element_size);
+    if (!total || !NativeSparseTriangleBatchHasGap(ranges))
+      return fail("sparse-index-range");
+    NativeUploadAllocation batch{};
+    const VkDeviceSize bytes = VkDeviceSize(total) * element_size;
+    if (!AllocateUpload(bytes, VkDeviceSize(element_size), batch, NativeUploadKind::kIndex) ||
+        !profile::CpuCall(profile::CpuOp::kIndexConvert, [&] {
+          return WriteNativeSparseTriangleIndices(
+              cpu_indices(), ranges, index32, {batch.mapping, size_t(bytes)});
+        }))
+      return fail("sparse-index-upload");
+    // Preserve the original index words, triangle order and common baseVertex.
+    selected_index_bytes = batch.mapping;
+    host_index_count = total;
+    host_start_index = 0;
+    host_index_buffer = batch.buffer;
+    host_index_offset = batch.offset;
+  } else if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kTriangleFan)) {
     const NativeTriangleFanKey fan_key{draw.start_index, draw.index_count,
         draw.primitive_restart_index, index32, guest_restart_enabled};
-    const auto& source = index32 ? command.index_buffer->host_index32_payload
-                                : command.index_buffer->host_index16_payload;
+    const auto& source = cpu_indices();
     fan_indices = command.index_buffer->triangle_fan_cache.Get(
         source, fan_key, xenos::kVertexIndexMask);
     if (!fan_indices) return fail("triangle-fan-index-range");
@@ -24636,34 +24832,21 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
     }
     host_index_count = GetQuadListTriangleListIndexCount(draw.index_count);
     const VkDeviceSize expanded_size = VkDeviceSize(host_index_count) * element_size;
-    if (!host_index_count || !AllocateUpload(expanded_size, size_t(element_size), quad_list_indices,
-                                             NativeUploadKind::kIndex)) {
-      return fail("quad-list-upload-allocation");
-    }
-    if (index32) {
-      const uint32_t* source = reinterpret_cast<const uint32_t*>(selected_index_bytes);
-      uint32_t* destination = reinterpret_cast<uint32_t*>(quad_list_indices.mapping);
-      for (uint32_t quad = 0; quad < draw.index_count / 4; ++quad) {
-        const uint32_t* vertices = source + quad * 4;
-        *(destination++) = vertices[0];
-        *(destination++) = vertices[1];
-        *(destination++) = vertices[2];
-        *(destination++) = vertices[0];
-        *(destination++) = vertices[2];
-        *(destination++) = vertices[3];
-      }
+    const NativeConvertedIndexKey key{command.index_buffer->generation, draw.start_index,
+        draw.index_count, 0, 0, NativeIndexConversion::kQuads, index32};
+    if (!host_index_count) return fail("quad-list-count-overflow");
+    if (const auto* cached = resources.converted_index_uploads.Find(key)) {
+      quad_list_indices = *cached;
+      AddNativeGpuProfileCounter(performance::Counter::kConvertedIndexUploadReuses);
     } else {
-      const uint16_t* source = reinterpret_cast<const uint16_t*>(selected_index_bytes);
-      uint16_t* destination = reinterpret_cast<uint16_t*>(quad_list_indices.mapping);
-      for (uint32_t quad = 0; quad < draw.index_count / 4; ++quad) {
-        const uint16_t* vertices = source + quad * 4;
-        *(destination++) = vertices[0];
-        *(destination++) = vertices[1];
-        *(destination++) = vertices[2];
-        *(destination++) = vertices[0];
-        *(destination++) = vertices[2];
-        *(destination++) = vertices[3];
-      }
+      if (!AllocateUpload(expanded_size, size_t(element_size), quad_list_indices,
+                          NativeUploadKind::kIndex) ||
+          !profile::CpuCall(profile::CpuOp::kIndexConvert, [&] {
+            return WriteNativeConvertedIndices(cpu_indices(), key,
+                {quad_list_indices.mapping, size_t(expanded_size)});
+          })) return fail("quad-list-upload-allocation");
+      if (!resources.converted_index_uploads.Insert(key, quad_list_indices))
+        return fail("quad-list-upload-cache");
     }
     selected_index_bytes = quad_list_indices.mapping;
     host_start_index = 0;
@@ -24675,7 +24858,7 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
   if (draw.primitive_type == uint32_t(xenos::PrimitiveType::kTriangleList) &&
       !guest_restart_enabled && host_start_index == draw.start_index &&
       host_index_count >= 96 && host_index_count % 3 == 0 &&
-      REXCVAR_GET(gta4_native_vertex_cache_order)) {
+      REXCVAR_GET(gta4_native_vertex_cache_order) && !sparse_batch) {
     const NativeFixedFunctionState& fixed = command.fixed_function_state;
     const bool monotonic_depth = fixed.depth_enable &&
         (fixed.depth_function == 1 || fixed.depth_function == 3 || fixed.depth_function == 4 ||
@@ -24707,7 +24890,7 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
       auto found = ranges.find(range_key);
       if (found == ranges.end()) {
         auto range = std::make_shared<NativeVertexCacheRange>();
-        if (NativeVertexCacheOptimizer::Get().Enqueue(range, selected_index_bytes,
+        if (NativeVertexCacheOptimizer::Get().Enqueue(range, original_index_bytes(),
                                                       host_index_count, index32)) {
           found = ranges.emplace(range_key, std::move(range)).first;
         }
@@ -24758,36 +24941,42 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
   }
   if (guest_restart_enabled && draw.primitive_type != uint32_t(xenos::PrimitiveType::kTriangleFan)) {
     const VkDeviceSize restart_size = VkDeviceSize(host_index_count) * element_size;
-    if (!AllocateUpload(restart_size, size_t(element_size), primitive_restart_indices,
-                        NativeUploadKind::kIndex)) {
-      return fail("primitive-restart-upload-allocation");
-    }
-    if (index32) {
-      const uint32_t* source = reinterpret_cast<const uint32_t*>(selected_index_bytes);
-      uint32_t* destination = reinterpret_cast<uint32_t*>(primitive_restart_indices.mapping);
-      for (uint32_t index = 0; index < host_index_count; ++index) {
-        const uint32_t value = source[index];
-        destination[index] =
-            (value & xenos::kVertexIndexMask) == draw.primitive_restart_index ? UINT32_MAX : value;
-      }
+    const NativeConvertedIndexKey key{command.index_buffer->generation, draw.start_index,
+        draw.index_count, draw.primitive_restart_index, xenos::kVertexIndexMask,
+        NativeIndexConversion::kRestart, index32};
+    if (const auto* cached = resources.converted_index_uploads.Find(key)) {
+      primitive_restart_indices = *cached;
+      AddNativeGpuProfileCounter(performance::Counter::kConvertedIndexUploadReuses);
     } else {
-      const uint16_t* source = reinterpret_cast<const uint16_t*>(selected_index_bytes);
-      uint16_t* destination = reinterpret_cast<uint16_t*>(primitive_restart_indices.mapping);
-      const uint16_t guest_restart_index = uint16_t(draw.primitive_restart_index);
-      for (uint32_t index = 0; index < host_index_count; ++index) {
-        destination[index] = source[index] == guest_restart_index ? UINT16_MAX : source[index];
-      }
+      if (!AllocateUpload(restart_size, size_t(element_size), primitive_restart_indices,
+                          NativeUploadKind::kIndex) ||
+          !profile::CpuCall(profile::CpuOp::kIndexConvert, [&] {
+            return WriteNativeConvertedIndices(cpu_indices(), key,
+                {primitive_restart_indices.mapping, size_t(restart_size)});
+          })) return fail("primitive-restart-upload-allocation");
+      if (!resources.converted_index_uploads.Insert(key, primitive_restart_indices))
+        return fail("primitive-restart-upload-cache");
     }
     selected_index_bytes = primitive_restart_indices.mapping;
     host_start_index = 0;
     host_index_buffer = primitive_restart_indices.buffer;
     host_index_offset = primitive_restart_indices.offset;
   }
+  if (!host_index_buffer) {
+    NativeUploadAllocation index_allocation;
+    if (!UploadBufferResource(command.index_buffer, command_buffer, true, index32, nullptr, 0,
+                              resources, index_allocation)) return fail("index-upload");
+    host_index_buffer = index_allocation.buffer;
+    host_index_offset = index_allocation.offset;
+  } else if (draw.primitive_type != uint32_t(xenos::PrimitiveType::kTriangleFan)) {
+    AddNativeGpuProfileCounter(performance::Counter::kPlainIndexUploadsSkipped);
+  }
   const bool collect_indexed_diagnostics =
       CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeTrace) ||
       (CachedDiagnosticsEnabled(rex::diagnostics::Category::kTransition) &&
        transition::IsEnabled() && transition::ActiveTransitionId());
   if (collect_indexed_diagnostics) {
+    if (!selected_index_bytes) selected_index_bytes = original_index_bytes();
     uint32_t minimum_index = UINT32_MAX;
     uint32_t maximum_index = 0;
     for (uint32_t index = 0; index < host_index_count; ++index) {
@@ -24808,7 +24997,7 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
     bool vertex_range_invalid = false;
     std::string stream_summary;
     for (uint32_t stream = 0; stream < kVertexStreamCount; ++stream) {
-      if (!required_streams[stream]) {
+      if (!(required_streams & (1u << stream))) {
         continue;
       }
       const auto& stream_state = command.pipeline_state->vertex_streams[stream];
@@ -25026,6 +25215,7 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
   const bool moltenvk_strip_restart =
       vulkan_provider->vulkan_device()->properties().driverID == VK_DRIVER_ID_MOLTENVK && strip;
   if (moltenvk_strip_restart && !guest_restart_enabled) {
+    if (!selected_index_bytes) selected_index_bytes = original_index_bytes();
     const bool disabled_restart_sentinel_used =
         index32 ? primitive_restart::IsDisabledRestartSentinelUsed(
                       reinterpret_cast<const uint32_t*>(selected_index_bytes), host_index_count)
@@ -25056,7 +25246,7 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
     }
   }
 
-  profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return dfn.vkCmdBindIndexBuffer(command_buffer, host_index_buffer, host_index_offset, bound_index_type); });
+  profile::CpuCall(profile::CpuOp::kDriverBind, [&] { return BindNativeIndexBuffer(command_buffer, host_index_buffer, host_index_offset, bound_index_type); });
   if (IsHoveGantryGeometryCandidate(command)) {
     static std::atomic<uint64_t> hove_recorded_draw_count{0};
     const uint64_t hit = ++hove_recorded_draw_count;
@@ -25103,7 +25293,8 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
     }
   }
   ObserveNativeGpuProfileDraw(command, pipeline, target.samples, 0, host_index_count);
-  if (REXCVAR_GET(gta4_native_gpu_breadcrumbs) && selected_index_bytes && host_index_count) {
+  if (REXCVAR_GET(gta4_native_gpu_breadcrumbs) && host_index_count) {
+    if (!selected_index_bytes) selected_index_bytes = original_index_bytes();
     // Diagnostics: an index past the end of a vertex stream makes the GPU
     // fetch outside the buffer (suspected cause of shadow-pass GPU hangs).
     uint32_t max_index = 0;
@@ -25115,7 +25306,7 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
     }
     const int64_t last_vertex = int64_t(max_index) + int64_t(draw.base_vertex);
     for (uint32_t stream = 0; stream < kVertexStreamCount; ++stream) {
-      if (!required_streams[stream]) continue;
+      if (!(required_streams & (1u << stream))) continue;
       const auto& stream_state = command.pipeline_state->vertex_streams[stream];
       const auto& resource = command.vertex_buffers[stream];
       if (!stream_state.stride || !resource) continue;
@@ -25144,7 +25335,8 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
 bool Gta4NativeGraphicsSystem::RecordClear(VkCommandBuffer command_buffer,
                                            const NativeCommand& command,
                                            const NativeRenderingTarget& target,
-                                           bool skip_depth_stencil) {
+                                           bool skip_depth_stencil,
+                                           uint32_t skip_color_mask) {
   const profile::CpuScope profile_scope(profile::CpuOp::kClear);
 
   ClearCommand clear{};
@@ -25167,7 +25359,8 @@ bool Gta4NativeGraphicsSystem::RecordClear(VkCommandBuffer command_buffer,
   std::array<VkClearAttachment, kRenderTargetCount + 1> attachments{};
   uint32_t attachment_count = 0;
   for (uint32_t index = 0; index < kRenderTargetCount; ++index) {
-    if (!(clear.flags & (uint32_t(1) << index)) || !target.color_views[index]) {
+    if (!(clear.flags & (uint32_t(1) << index)) ||
+        (skip_color_mask & (uint32_t(1) << index)) || !target.color_views[index]) {
       continue;
     }
     VkClearAttachment& attachment = attachments[attachment_count++];
@@ -25196,7 +25389,9 @@ bool Gta4NativeGraphicsSystem::RecordClear(VkCommandBuffer command_buffer,
     attachment.clearValue.depthStencil.stencil = clear.stencil;
   }
   if (!attachment_count) {
-    return skip_depth_stencil && (clear.flags & 0x30) && target.depth_surface;
+    // The scope's load-op already performed the entire requested clear.
+    return ((skip_depth_stencil && (clear.flags & 0x30) && target.depth_surface) ||
+            ((skip_color_mask & clear.flags & 0xFu) != 0));
   }
 
   VkClearRect rectangle{};
@@ -29877,6 +30072,8 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
   bool rendering = false;
   // A clear whose depth/stencil part became its scope's load-op clear.
   size_t folded_depth_clear_index = SIZE_MAX;
+  size_t folded_color_clear_index = SIZE_MAX;
+  uint32_t folded_color_clear_mask = 0;
   uint32_t lighting_pass_reuses = 0;
   // Clears recorded this frame, per attachment aspect. A write serial is unique
   // across surfaces, so an unchanged one means nothing touched the aspect since.
@@ -31592,10 +31789,20 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
       QueueSurfaceImageRelease(release.resource);
       continue;
     }
+    // Drawing always applies the full captured fixed-function state. This is
+    // only a diagnostic cross-thread consistency hash, not a draw dependency.
+    // Reduce redundant serialization on ordinary 3500+ draw frames; keep
+    // exhaustive verification when debugging state corruption.
     if ((queued_command.type == CommandType::kDrawPrimitive ||
          queued_command.type == CommandType::kDrawPrimitiveUp ||
          queued_command.type == CommandType::kDrawIndexedPrimitive ||
          queued_command.type == CommandType::kClear) &&
+        queued_command.recorded_fixed_function_state_hash &&
+        ShouldVerifyRecordedFixedState(
+            REXCVAR_GET(gta4_validate_native_hot_caches) ||
+                REXCVAR_GET(gta4_trace_native_renderer) ||
+                REXCVAR_GET(gta4_native_gpu_breadcrumbs),
+            command_index) &&
         queued_command.recorded_fixed_function_state_hash !=
             HashFixedFunctionState(queued_command.fixed_function_state)) {
       REXLOG_ERROR(
@@ -33243,6 +33450,22 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
             trace_sequence, submitted_frame, command_index, CommandTypeName(command.type));
       }
       continue;
+    }
+    // No-op clears must not trigger implicit attachment load-op clears or
+    // extra renderpass transitions. RecordClear would reject this rectangle.
+    if (command.type == CommandType::kClear &&
+        REXCVAR_GET(gta4_native_skip_empty_clears) &&
+        !diagnostic_frame && !fire_frame_ && !force_content_probe &&
+        !PhoneTraceConfig().enabled && !TvTraceConfig().enabled &&
+        !NativeRendererEventTraceEnabled() &&
+        command.bytes.size() >= sizeof(ClearCommand)) {
+      ClearCommand no_op_clear{};
+      std::memcpy(&no_op_clear, command.bytes.data(), sizeof(no_op_clear));
+      if (NativeClearRectHasNoPixels(
+              no_op_clear.left, no_op_clear.top, no_op_clear.right,
+              no_op_clear.bottom, target.logical_width, target.logical_height)) {
+        continue;
+      }
     }
     if (target.uses_presenter && !temporal_presenter_acquired_) {
       if (rendering) { end_rendering(__LINE__); rendering = false; }
@@ -35243,6 +35466,37 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
           folded_depth_clear_index = command_index;
         }
       }
+      // Color fast clear at scope begin: LOAD_OP_CLEAR discards the previous
+      // contents without an explicit vkCmdClearAttachments in the tile pass.
+      // This only runs for complete guest-target rectangles on the first
+      // command of a new rendering scope. Partially covered clears keep their
+      // exact original Vulkan path.
+      if (command.type == CommandType::kClear &&
+          REXCVAR_GET(gta4_native_fold_color_clears) &&
+          !diagnostic_frame && !fire_frame_ && !force_content_probe &&
+          !PhoneTraceConfig().enabled && !TvTraceConfig().enabled &&
+          !CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeProbes) &&
+          command.bytes.size() >= sizeof(ClearCommand)) {
+        ClearCommand color_clear{};
+        std::memcpy(&color_clear, command.bytes.data(), sizeof(color_clear));
+        const uint32_t fold_mask = NativeFullColorClearMask(
+            color_clear.flags, target.color_attachment_mask,
+            color_clear.left, color_clear.top, color_clear.right,
+            color_clear.bottom, target.logical_width, target.logical_height);
+        if (fold_mask) {
+          folded_color_clear_index = command_index;
+          folded_color_clear_mask = fold_mask;
+          for (uint32_t index = 0; index < kRenderTargetCount; ++index) {
+            if (!(fold_mask & (1u << index)) || !color_attachments[index].imageView)
+              continue;
+            color_attachments[index].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            for (uint32_t component = 0; component < 4; ++component) {
+              color_attachments[index].clearValue.color.float32[component] =
+                  std::bit_cast<float>(color_clear.color_bits[component]);
+            }
+          }
+        }
+      }
       VkRenderingInfo rendering_info{};
       rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
       rendering_info.renderArea.extent.width = target.width;
@@ -36201,6 +36455,35 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
       }
     }
     const uint32_t fire_query = BeginFireQuery(command_buffer, command, translucent_query_index);
+    // A completely empty scissor produces no fragments. Preserve all guest
+    // timeline and render-scope load/clear operations, but omit the otherwise
+    // wasted vertex/index/pixel draw ONLY if no query or diagnostic could
+    // observe its geometry. This is more conservative than general invisible
+    // output elision: no shader outputs or valid scissor regions are altered.
+    // Cheap scissor test runs first. Queries, renderer probes and temporal
+    // guards are checked only for a rare actually-empty native rectangle;
+    // otherwise the thousands of normal draws pay almost no added CPU cost.
+    const bool potential_zero_coverage_draw =
+        REXCVAR_GET(gta4_native_elide_zero_coverage_draws) && draw_command &&
+        command.pipeline_state && command.shader_state &&
+        NativeRasterScissorHasNoPixels(
+            command.fixed_function_state.scissor, target.logical_width, target.logical_height);
+    const bool elide_zero_coverage_draw =
+        potential_zero_coverage_draw &&
+        CanElideNativeZeroCoverageDraw(
+            command.fixed_function_state.scissor, target.logical_width,
+            target.logical_height,
+            fire_query != UINT32_MAX || translucent_query_index != UINT32_MAX ||
+                water_query_index != UINT32_MAX,
+            diagnostic_frame || legacy_diagnostics || diagnostic_variants_enabled ||
+                force_content_probe || fire_images_ || collect_frame_diagnostics ||
+                REXCVAR_GET(gta4_native_gpu_breadcrumbs) ||
+                REXCVAR_GET(gta4_native_debug_gpu_attribution) != 0 ||
+                NativeRendererEventTraceEnabled() || IsArtificialLightTraceEnabled() ||
+                command.fire_trace || command.bulb_trace || command.phone_trace ||
+                command.tv_trace || command.light_trace_id,
+            command.temporal_scene_binding || command.temporal_instance ||
+                target.temporal_shader || command.temporal_composite_mode);
     bool command_recorded = false;
     if (!semantic_lineage_ready) {
       trace_deferred_light_draw(false);
@@ -36208,9 +36491,80 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
       if (collect_frame_diagnostics) {
         ++failed_draws;
       }
+    } else if (elide_zero_coverage_draw) {
+      // No Vulkan draw is emitted. Keeping the active rendering scope matters:
+      // its attachment load-op clears and any earlier writes still happen.
+      AddNativeGpuProfileCounter(performance::Counter::kZeroCoverageDrawSkips);
+      command_recorded = true;
     } else if (command.type == CommandType::kDrawPrimitive) {
+      // Normal indexed merging already eliminates adjacent-index draws.
+      // The nonindexed triangle-list equivalent can do the same without
+      // copying vertex data: all vertices are already consecutive in one
+      // immutable resource, and triangle boundaries must not be crossed.
+      size_t merged_count = 1;
+      uint32_t merged_vertices = 0;
+      if (REXCVAR_GET(gta4_native_merge_sequential_draws) && &command == &queued_command &&
+          !diagnostic_frame && !legacy_diagnostics && !target.temporal_shader &&
+          !command.fire_trace && !command.bulb_trace && !command.phone_trace &&
+          !command.tv_trace && !command.temporal_scene_binding && !command.temporal_instance &&
+          command.pipeline_state && command.shader_state &&
+          command.pipeline_state->vertex_shader_resource &&
+          !command.pipeline_state->vertex_shader_resource->uses_vertex_index &&
+          fire_query == UINT32_MAX) {
+        DrawPrimitiveCommand head{};
+        std::memcpy(&head, command.bytes.data(), sizeof(head));
+        if (head.primitive_type == uint32_t(xenos::PrimitiveType::kTriangleList) &&
+            head.vertex_count >= 3 && head.vertex_count % 3 == 0) {
+          merged_vertices = head.vertex_count;
+          for (size_t next = command_index + 1; next < current_frame_.size() &&
+               merged_count < 64; ++next) {
+            const NativeCommand& other = current_frame_[next];
+            if (other.type != CommandType::kDrawPrimitive || other.fire_trace ||
+                other.bulb_trace || other.phone_trace || other.tv_trace ||
+                other.temporal_scene_binding || other.temporal_instance) break;
+            DrawPrimitiveCommand next_draw{};
+            std::memcpy(&next_draw, other.bytes.data(), sizeof(next_draw));
+            if (next_draw.primitive_type != head.primitive_type ||
+                !CanExtendNativeSequentialTriangleList(
+                    head.start_vertex, merged_vertices, next_draw.start_vertex,
+                    next_draw.vertex_count)) break;
+            if (other.pipeline_state != command.pipeline_state ||
+                other.shader_state != command.shader_state ||
+                other.vertex_buffers != command.vertex_buffers ||
+                other.textures != command.textures ||
+                other.render_phase != command.render_phase ||
+                other.used_texture_mask != command.used_texture_mask ||
+                other.descriptor_page != command.descriptor_page ||
+                other.texture_descriptor_indices != command.texture_descriptor_indices ||
+                other.sampler_descriptor_indices != command.sampler_descriptor_indices ||
+                other.captured_vertex_constants_hash != command.captured_vertex_constants_hash ||
+                other.captured_pixel_constants_hash != command.captured_pixel_constants_hash ||
+                std::memcmp(&other.lighting, &command.lighting, sizeof(command.lighting)) != 0 ||
+                std::memcmp(&other.texture_fetches, &command.texture_fetches,
+                            sizeof(command.texture_fetches)) != 0 ||
+                std::memcmp(&other.fixed_function_state, &command.fixed_function_state,
+                            sizeof(command.fixed_function_state)) != 0) break;
+            merged_vertices += next_draw.vertex_count;
+            ++merged_count;
+          }
+        }
+      }
+      if (merged_count > 1) primitive_merge_count_override_ = merged_vertices;
       command_recorded =
           RecordPrimitive(command_buffer, command, target.width, target.height, target, resources);
+      primitive_merge_count_override_ = 0;
+      if (merged_count > 1) {
+        if (command_recorded) {
+          merged_up_until = command_index + merged_count;
+          AddNativeGpuProfileCounter(performance::Counter::kSequentialDrawsMerged,
+                                    merged_count - 1);
+        } else {
+          // Do not discard any originally valid draw if the larger range
+          // cannot be bound or recorded; remaining draws stay in the stream.
+          command_recorded = RecordPrimitive(command_buffer, command, target.width,
+                                             target.height, target, resources);
+        }
+      }
       trace_deferred_light_draw(command_recorded);
       if (collect_frame_diagnostics) {
         command_recorded ? ++successful_draws : ++failed_draws;
@@ -36276,24 +36630,52 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
         command_recorded ? ++successful_draws : ++failed_draws;
       }
     } else if (command.type == CommandType::kDrawIndexedPrimitive) {
-      // Consecutive triangle-list draws of one mesh with identical state whose
-      // index ranges continue each other are the same work as one draw over
-      // the joined range: record them as one.
+      // First prefer the original zero-copy merge of adjacent index ranges.
+      // Sparse opaque runs can instead repack discontiguous index spans into
+      // ONE actual Vulkan indexed draw, preserving all index words and order.
       size_t merged_count = 1;
       uint32_t merged_indices = 0;
+      size_t sparse_count = 0;
+      uint32_t sparse_indices = 0;
+      bool sparse_has_gap = false;
+      bool sparse_allowed = false;
       if (REXCVAR_GET(gta4_native_merge_indexed_draws) && &command == &queued_command &&
-          !diagnostic_frame && !legacy_diagnostics && !command.fire_trace && !command.bulb_trace &&
-          !command.phone_trace && !command.tv_trace && !command.temporal_scene_binding &&
-          !command.temporal_instance && command.pipeline_state && command.shader_state &&
-          command.index_buffer && fire_query == UINT32_MAX) {
+          !diagnostic_frame && !legacy_diagnostics && !command.fire_trace &&
+          !command.bulb_trace && !command.phone_trace && !command.tv_trace &&
+          !command.temporal_scene_binding && !command.temporal_instance &&
+          command.pipeline_state && command.shader_state && command.index_buffer &&
+          fire_query == UINT32_MAX) {
         DrawIndexedPrimitiveCommand head{};
         std::memcpy(&head, command.bytes.data(), sizeof(head));
         if (head.primitive_type == uint32_t(xenos::PrimitiveType::kTriangleList) &&
             head.index_count) {
           merged_indices = head.index_count;
-          uint32_t next_start = head.start_index + head.index_count;
-          for (size_t next = command_index + 1; next < current_frame_.size() && merged_count < 64;
-               ++next) {
+          const uint64_t source_indices = command.index_buffer->payload.size() /
+              ((command.index_buffer->flags & kIndex32Flag) ? sizeof(uint32_t) :
+                                                             sizeof(uint16_t));
+          sparse_allowed = REXCVAR_GET(gta4_native_merge_sparse_indexed_draws) &&
+              !diagnostic_variants_enabled && !force_content_probe &&
+              !collect_frame_diagnostics && !target.temporal_shader &&
+              !command.light_trace_id && !command.temporal_composite_mode &&
+              !command.temporal_prefilter && !command.fixed_function_state.blend_enable &&
+              !command.fixed_function_state.stencil_enable &&
+              !REXCVAR_GET(gta4_native_gpu_breadcrumbs) &&
+              !REXCVAR_GET(gta4_native_debug_gpu_attribution) &&
+              !NativeRendererEventTraceEnabled() && !IsArtificialLightTraceEnabled() &&
+              translucent_query_index == UINT32_MAX && water_query_index == UINT32_MAX &&
+              command.pipeline_state->vertex_shader_resource &&
+              !command.pipeline_state->vertex_shader_resource->uses_vertex_index &&
+              head.index_count >= 3 && head.index_count % 3 == 0 &&
+              head.index_count <= kNativeSparseIndexBatchMaxIndices &&
+              uint64_t(head.start_index) + head.index_count <= source_indices;
+          if (sparse_allowed) {
+            sparse_indexed_ranges_[0] = {head.start_index, head.index_count};
+            sparse_count = 1;
+            sparse_indices = head.index_count;
+          }
+          uint64_t next_start = uint64_t(head.start_index) + head.index_count;
+          for (size_t next = command_index + 1;
+               next < current_frame_.size() && next - command_index < 64; ++next) {
             const NativeCommand& other = current_frame_[next];
             if (other.type != CommandType::kDrawIndexedPrimitive || other.fire_trace ||
                 other.bulb_trace || other.phone_trace || other.tv_trace ||
@@ -36314,34 +36696,89 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
                 std::memcmp(&other.texture_fetches, &command.texture_fetches,
                             sizeof(command.texture_fetches)) != 0 ||
                 std::memcmp(&other.fixed_function_state, &command.fixed_function_state,
-                            sizeof(command.fixed_function_state)) != 0) {
-              break;
-            }
+                            sizeof(command.fixed_function_state)) != 0) break;
             DrawIndexedPrimitiveCommand draw{};
             std::memcpy(&draw, other.bytes.data(), sizeof(draw));
-            if (draw.primitive_type != head.primitive_type || draw.base_vertex != head.base_vertex ||
-                draw.start_index != next_start || !draw.index_count ||
-                merged_indices > UINT32_MAX - draw.index_count) {
+            if (draw.primitive_type != head.primitive_type ||
+                draw.base_vertex != head.base_vertex || !draw.index_count)
+              break;
+            const bool adjacent = uint64_t(draw.start_index) == next_start;
+            // Keep original contiguous merge semantics even if a candidate
+            // is rejected for the stricter sparse path.
+            if (sparse_allowed) {
+              const bool state_ok =
+                  !other.light_trace_id && !other.temporal_composite_mode &&
+                  !other.temporal_prefilter &&
+                  other.render_phase_object == command.render_phase_object &&
+                  other.failed_texture_mask == command.failed_texture_mask &&
+                  other.descriptor_copy == command.descriptor_copy &&
+                  other.image_descriptor_epoch == command.image_descriptor_epoch &&
+                  other.sampler_descriptor_epoch == command.sampler_descriptor_epoch &&
+                  other.draw_descriptor_sets == command.draw_descriptor_sets &&
+                  other.environmental_data == command.environmental_data &&
+                  other.environmental_data_hash == command.environmental_data_hash &&
+                  other.worker_ring_serial == command.worker_ring_serial &&
+                  other.worker_vertex_constants_offset ==
+                      command.worker_vertex_constants_offset &&
+                  other.worker_pixel_constants_offset ==
+                      command.worker_pixel_constants_offset;
+              const bool range_ok =
+                  draw.index_count >= 3 && draw.index_count % 3 == 0 &&
+                  uint64_t(draw.start_index) + draw.index_count <= source_indices &&
+                  draw.index_count <= kNativeSparseIndexBatchMaxIndices - sparse_indices;
+              if (!state_ok || !range_ok) {
+                sparse_allowed = false;
+                if (!adjacent) break;
+              } else {
+                sparse_has_gap |= !adjacent;
+                sparse_indexed_ranges_[sparse_count++] = {draw.start_index, draw.index_count};
+                sparse_indices += draw.index_count;
+              }
+            }
+            if (adjacent && !sparse_has_gap) {
+              if (merged_indices > UINT32_MAX - draw.index_count) break;
+              merged_indices += draw.index_count;
+              ++merged_count;
+            } else if (!sparse_allowed) {
               break;
             }
-            merged_indices += draw.index_count;
-            next_start += draw.index_count;
-            ++merged_count;
+            next_start = uint64_t(draw.start_index) + draw.index_count;
           }
         }
       }
-      if (merged_count > 1) indexed_merge_count_override_ = merged_indices;
-      command_recorded = RecordIndexedPrimitive(command_buffer, command, target.width,
-                                                target.height, target, resources);
-      indexed_merge_count_override_ = 0;
-      if (merged_count > 1) {
+      const bool use_sparse_batch =
+          sparse_allowed && sparse_has_gap && sparse_count >= 4 &&
+          sparse_count >= merged_count + 2;
+      if (use_sparse_batch) {
+        sparse_indexed_range_count_ = uint32_t(sparse_count);
+        command_recorded = RecordIndexedPrimitive(command_buffer, command, target.width,
+                                                  target.height, target, resources);
+        sparse_indexed_range_count_ = 0;
         if (command_recorded) {
-          merged_up_until = command_index + merged_count;
-          g_indexed_draws_merged.fetch_add(merged_count - 1, std::memory_order_relaxed);
+          merged_up_until = command_index + sparse_count;
+          AddNativeGpuProfileCounter(performance::Counter::kSparseIndexedDrawsMerged,
+                                     sparse_count - 1);
+          g_indexed_draws_merged.fetch_add(sparse_count - 1, std::memory_order_relaxed);
         } else {
-          // Fall back to the first draw alone; the rest record normally.
+          // Upload/capacity failure restores the untouched first original
+          // draw; every following guest draw remains in the command queue.
           command_recorded = RecordIndexedPrimitive(command_buffer, command, target.width,
                                                     target.height, target, resources);
+        }
+      } else {
+        if (merged_count > 1) indexed_merge_count_override_ = merged_indices;
+        command_recorded = RecordIndexedPrimitive(command_buffer, command, target.width,
+                                                  target.height, target, resources);
+        indexed_merge_count_override_ = 0;
+        if (merged_count > 1) {
+          if (command_recorded) {
+            merged_up_until = command_index + merged_count;
+            g_indexed_draws_merged.fetch_add(merged_count - 1, std::memory_order_relaxed);
+          } else {
+            // Fallback: record the first unmodified guest draw if merging fails.
+            command_recorded = RecordIndexedPrimitive(command_buffer, command, target.width,
+                                                      target.height, target, resources);
+          }
         }
       }
       trace_deferred_light_draw(command_recorded);
@@ -36420,8 +36857,10 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
         g_repeated_clears_skipped.fetch_add(1, std::memory_order_relaxed);
         command_recorded = true;
       } else {
-        command_recorded = RecordClear(command_buffer, command, target,
-                                       command_index == folded_depth_clear_index);
+        command_recorded = RecordClear(
+            command_buffer, command, target,
+            command_index == folded_depth_clear_index,
+            command_index == folded_color_clear_index ? folded_color_clear_mask : 0u);
       }
       if (collect_frame_diagnostics) {
         command_recorded ? ++successful_clears : ++failed_clears;
@@ -37534,6 +37973,7 @@ bool Gta4NativeGraphicsSystem::ClearGuestOutput(
         bool(present_source), present_source ? present_source->generation : 0);
   }
 
+  std::optional<profile::CpuScope> producer_wait_scope;
   const bool refresh_result = presenter_->RefreshGuestOutput(
       width, height, display_width, display_height,
       [this, vulkan_device, width, height, submitted_frame, present_source, environmental_data,
@@ -38238,6 +38678,9 @@ bool Gta4NativeGraphicsSystem::ClearGuestOutput(
       ui::GuestOutputProvenance{
           .frame_rate_limit = rex::cvar::Query<uint32_t>("gta4_frame_limit"),
           .producer_backpressure = present.device != 0,
+#if REX_PLATFORM_ANDROID
+          .producer_render_ahead = true,
+#endif
           .tv_session_id = present.diagnostic_tv_session_id,
           .title_present_id = present.diagnostic_present_id,
           .selected_generation = present_source ? present_source->generation : 0,
@@ -38252,6 +38695,10 @@ bool Gta4NativeGraphicsSystem::ClearGuestOutput(
           .native_command_count = uint32_t(current_frame_.size()),
           .tv_bink_result = present.diagnostic_tv_bink_result,
           .diagnostic_trace = present.diagnostic_trace != 0,
+      },
+      [&](bool waiting) {
+        if (waiting) producer_wait_scope.emplace(profile::CpuOp::kPresenterWait);
+        else producer_wait_scope.reset();
       });
   return refresh_result;
 }
@@ -38387,6 +38834,7 @@ void Gta4NativeGraphicsSystem::DestroyNativeRendererObjects() {
   next_surface_write_serial_ = 1;
   next_reflection_capture_epoch_ = 1;
   reflection_resources_.clear();
+  surface_lookup_cache_.Invalidate();
   if (resolve_conversion_pipeline_layout_) {
     profile::CpuCall(profile::CpuOp::kDriverDestruction, [&] { return dfn.vkDestroyPipelineLayout(device, resolve_conversion_pipeline_layout_, nullptr); });
   }
