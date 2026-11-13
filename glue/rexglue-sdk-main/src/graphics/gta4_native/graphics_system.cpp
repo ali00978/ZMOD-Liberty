@@ -4,6 +4,7 @@
 #include "native_profile_labels.h"
 #include "graphics_system.h"
 #include "native_surface_retirement_scan.h"
+#include "native_color_clear_fastpath.h"
 #if defined(__ANDROID__)
 #include <android/log.h>
 #include <pthread.h>
@@ -394,6 +395,11 @@ REXCVAR_DEFINE_BOOL(gta4_native_lazy_resolves, false, "GTA IV/Graphics/Native Re
 REXCVAR_DEFINE_BOOL(gta4_native_keep_draw_state, true, "GTA IV/Graphics/Native Renderer",
                     "Keep the cached pipeline, descriptor and dynamic state across clears and "
                     "phase markers, which bind nothing");
+REXCVAR_DEFINE_BOOL(gta4_native_fold_color_clears, true, "GTA IV/Graphics/Native Renderer",
+                    "Use Vulkan attachment load-op CLEAR for full-area color clears when opening "
+                    "a new rendering scope, avoiding a separate GPU clear command");
+REXCVAR_DEFINE_BOOL(gta4_native_skip_empty_clears, true, "GTA IV/Graphics/Native Renderer",
+                    "Do not open a Vulkan rendering scope for a clear with zero pixel coverage");
 REXCVAR_DEFINE_BOOL(gta4_native_skip_repeated_clears, true, "GTA IV/Graphics/Native Renderer",
                     "Skip a clear when its attachments already hold that clear (same value, same "
                     "or larger rectangle) and nothing wrote them since");
@@ -25329,7 +25335,8 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
 bool Gta4NativeGraphicsSystem::RecordClear(VkCommandBuffer command_buffer,
                                            const NativeCommand& command,
                                            const NativeRenderingTarget& target,
-                                           bool skip_depth_stencil) {
+                                           bool skip_depth_stencil,
+                                           uint32_t skip_color_mask) {
   const profile::CpuScope profile_scope(profile::CpuOp::kClear);
 
   ClearCommand clear{};
@@ -25352,7 +25359,8 @@ bool Gta4NativeGraphicsSystem::RecordClear(VkCommandBuffer command_buffer,
   std::array<VkClearAttachment, kRenderTargetCount + 1> attachments{};
   uint32_t attachment_count = 0;
   for (uint32_t index = 0; index < kRenderTargetCount; ++index) {
-    if (!(clear.flags & (uint32_t(1) << index)) || !target.color_views[index]) {
+    if (!(clear.flags & (uint32_t(1) << index)) ||
+        (skip_color_mask & (uint32_t(1) << index)) || !target.color_views[index]) {
       continue;
     }
     VkClearAttachment& attachment = attachments[attachment_count++];
@@ -25381,7 +25389,9 @@ bool Gta4NativeGraphicsSystem::RecordClear(VkCommandBuffer command_buffer,
     attachment.clearValue.depthStencil.stencil = clear.stencil;
   }
   if (!attachment_count) {
-    return skip_depth_stencil && (clear.flags & 0x30) && target.depth_surface;
+    // The scope's load-op already performed the entire requested clear.
+    return ((skip_depth_stencil && (clear.flags & 0x30) && target.depth_surface) ||
+            ((skip_color_mask & clear.flags & 0xFu) != 0));
   }
 
   VkClearRect rectangle{};
@@ -30062,6 +30072,8 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
   bool rendering = false;
   // A clear whose depth/stencil part became its scope's load-op clear.
   size_t folded_depth_clear_index = SIZE_MAX;
+  size_t folded_color_clear_index = SIZE_MAX;
+  uint32_t folded_color_clear_mask = 0;
   uint32_t lighting_pass_reuses = 0;
   // Clears recorded this frame, per attachment aspect. A write serial is unique
   // across surfaces, so an unchanged one means nothing touched the aspect since.
@@ -33439,6 +33451,22 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
       }
       continue;
     }
+    // No-op clears must not trigger implicit attachment load-op clears or
+    // extra renderpass transitions. RecordClear would reject this rectangle.
+    if (command.type == CommandType::kClear &&
+        REXCVAR_GET(gta4_native_skip_empty_clears) &&
+        !diagnostic_frame && !fire_frame_ && !force_content_probe &&
+        !PhoneTraceConfig().enabled && !TvTraceConfig().enabled &&
+        !NativeRendererEventTraceEnabled() &&
+        command.bytes.size() >= sizeof(ClearCommand)) {
+      ClearCommand no_op_clear{};
+      std::memcpy(&no_op_clear, command.bytes.data(), sizeof(no_op_clear));
+      if (NativeClearRectHasNoPixels(
+              no_op_clear.left, no_op_clear.top, no_op_clear.right,
+              no_op_clear.bottom, target.logical_width, target.logical_height)) {
+        continue;
+      }
+    }
     if (target.uses_presenter && !temporal_presenter_acquired_) {
       if (rendering) { end_rendering(__LINE__); rendering = false; }
       AcquireNativePresenterImage(command_buffer);
@@ -35438,6 +35466,37 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
           folded_depth_clear_index = command_index;
         }
       }
+      // Color fast clear at scope begin: LOAD_OP_CLEAR discards the previous
+      // contents without an explicit vkCmdClearAttachments in the tile pass.
+      // This only runs for complete guest-target rectangles on the first
+      // command of a new rendering scope. Partially covered clears keep their
+      // exact original Vulkan path.
+      if (command.type == CommandType::kClear &&
+          REXCVAR_GET(gta4_native_fold_color_clears) &&
+          !diagnostic_frame && !fire_frame_ && !force_content_probe &&
+          !PhoneTraceConfig().enabled && !TvTraceConfig().enabled &&
+          !CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeProbes) &&
+          command.bytes.size() >= sizeof(ClearCommand)) {
+        ClearCommand color_clear{};
+        std::memcpy(&color_clear, command.bytes.data(), sizeof(color_clear));
+        const uint32_t fold_mask = NativeFullColorClearMask(
+            color_clear.flags, target.color_attachment_mask,
+            color_clear.left, color_clear.top, color_clear.right,
+            color_clear.bottom, target.logical_width, target.logical_height);
+        if (fold_mask) {
+          folded_color_clear_index = command_index;
+          folded_color_clear_mask = fold_mask;
+          for (uint32_t index = 0; index < kRenderTargetCount; ++index) {
+            if (!(fold_mask & (1u << index)) || !color_attachments[index].imageView)
+              continue;
+            color_attachments[index].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            for (uint32_t component = 0; component < 4; ++component) {
+              color_attachments[index].clearValue.color.float32[component] =
+                  std::bit_cast<float>(color_clear.color_bits[component]);
+            }
+          }
+        }
+      }
       VkRenderingInfo rendering_info{};
       rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
       rendering_info.renderArea.extent.width = target.width;
@@ -36798,8 +36857,10 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
         g_repeated_clears_skipped.fetch_add(1, std::memory_order_relaxed);
         command_recorded = true;
       } else {
-        command_recorded = RecordClear(command_buffer, command, target,
-                                       command_index == folded_depth_clear_index);
+        command_recorded = RecordClear(
+            command_buffer, command, target,
+            command_index == folded_depth_clear_index,
+            command_index == folded_color_clear_index ? folded_color_clear_mask : 0u);
       }
       if (collect_frame_diagnostics) {
         command_recorded ? ++successful_clears : ++failed_clears;

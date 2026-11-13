@@ -1972,7 +1972,7 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
                               NativeFrameResources& resources);
   bool RecordClear(VkCommandBuffer command_buffer, const NativeCommand& command,
                    const NativeRenderingTarget& target,
-                   bool skip_depth_stencil = false);
+                   bool skip_depth_stencil = false, uint32_t skip_color_mask = 0);
   bool RecordResolve(VkCommandBuffer command_buffer, const NativeCommand& command,
                      uint32_t submitted_frame,
                      NativeTextureImage* high_precision_destination = nullptr,

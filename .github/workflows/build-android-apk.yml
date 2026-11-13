@@ -170,6 +170,7 @@ jobs:
           python tools/test_g925_runahead_v228.py
           python tools/test_g925_fixed_state_validation_v229.py
           python tools/test_g925_fixed_state_hotpath_v230.py
+          python tools/test_g925_gpu_clear_v231.py
           python tools/test_g925_present_overlap_v212.py
           python tools/test_g925_profile_report_v27.py
 
