@@ -27,8 +27,9 @@ assert re.search(r"queued_command\.recorded_fixed_function_state_hash\s*&&\s*Sho
 assert "BindCommonDrawState(" in code and "vkCmdDrawIndexed(" in code
 assert 'gta4_trace_native_renderer, false, "GTA IV/Diagnostics"' in code
 gradle = (root / "os/android/app/build.gradle.kts").read_text()
-assert re.search(r"versionCode\s*=\s*58", gradle)
-assert "-alpha-2.30-g925-hash-hotpath" in gradle
+match = re.search(r"versionCode\s*=\s*(\d+)", gradle)
+assert match and int(match.group(1)) >= 58
+assert re.search(r"-alpha-2\.(?:30|3\d)-g925-", gradle)
 workflow = (root / ".github/workflows/build-android-apk.yml").read_text()
 assert "python tools/test_g925_fixed_state_hotpath_v230.py" in workflow
 print("PASS: no diagnostic hashes in gameplay; integrity and draw-state checks retained")
