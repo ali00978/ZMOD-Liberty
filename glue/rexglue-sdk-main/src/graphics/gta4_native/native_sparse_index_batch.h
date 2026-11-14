@@ -34,6 +34,16 @@ constexpr uint32_t NativeSparseTriangleIndexCount(
   return total;
 }
 
+// 3 tiny opaque identical draws can save two GPU commands with a bounded
+// <=1024-index upload. The caller still verifies all existing state/query gates.
+inline constexpr uint32_t kNativeSmallSparseBatchMaxIndices = 1024;
+constexpr bool ShouldBatchNativeSparseIndexDraws(size_t draw_count, size_t adjacent_count,
+                                                 uint32_t indices, bool has_gap) {
+  return has_gap &&
+      ((draw_count >= 4 && draw_count >= adjacent_count + 2) ||
+       (draw_count == 3 && adjacent_count == 1 &&
+        indices <= kNativeSmallSparseBatchMaxIndices));
+}
 constexpr bool NativeSparseTriangleBatchHasGap(
     std::span<const NativeSparseIndexRange> ranges) {
   for (size_t i = 1; i < ranges.size(); ++i) {

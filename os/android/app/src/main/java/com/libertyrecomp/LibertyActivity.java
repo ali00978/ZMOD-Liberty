@@ -291,7 +291,7 @@ public class LibertyActivity extends SDLActivity {
         }
         migrateArguments(argsFile);
         migrateConfig(new File(new File(dataRoot, "LibertyRecomp"), "native.toml"));
-        enableRunAhead4Once(dataRoot);
+        enableLowLatencyRunAheadOnce(dataRoot);
         List<String> arguments = new ArrayList<>(Arrays.asList(readArguments(argsFile)));
         // Performance overlay lines chosen on the launcher (written by
         // LauncherActivity); later arguments win, so these override args.txt.
@@ -686,14 +686,15 @@ public class LibertyActivity extends SDLActivity {
     }
 
     /**
-     * The previous launcher persisted an explicit 0 (its old default). On
-     * first launch of 2.28, activate the requested four-frame preset once,
-     * then let the player freely select 0-4 in the launcher afterwards.
-     * Preserve existing explicit 1/2 settings and never rewrite game assets.
+     * Four extra frames (v2.28 auto preset) did not fix the measured G925
+     * throughput bottleneck and can increase input latency. Reset once
+     * without touching the graphics quality, game assets or saved games.
+     * A manual 4 after v2.28 is indistinguishable from its old auto preset.
      */
-    private static void enableRunAhead4Once(File dataRoot) {
-        File marker = new File(dataRoot, ".g925_runahead4_v228");
+    private static void enableLowLatencyRunAheadOnce(File dataRoot) {
+        File marker = new File(dataRoot, ".g925_runahead1_v232");
         if (marker.exists()) return;
+        File oldPreset = new File(dataRoot, ".g925_runahead4_v228");
         File graphics = new File(dataRoot, GRAPHICS_FILE);
         try {
             List<String> lines = graphics.isFile()
@@ -705,25 +706,24 @@ public class LibertyActivity extends SDLActivity {
                 String value = cleanLine(lines.get(i));
                 if (!value.startsWith("--gta4_extra_frames_in_flight=")) continue;
                 seen = true;
-                if (value.equals("--gta4_extra_frames_in_flight=0")) {
-                    lines.set(i, "--gta4_extra_frames_in_flight=4");
+                if (oldPreset.exists() && value.equals("--gta4_extra_frames_in_flight=4")) {
+                    lines.set(i, "--gta4_extra_frames_in_flight=1");
                     changed = true;
                 }
             }
             if (!seen) {
-                lines.add("--gta4_extra_frames_in_flight=4");
+                lines.add("--gta4_extra_frames_in_flight=1");
                 changed = true;
             }
             if (changed) {
                 Files.write(graphics.toPath(), lines, StandardCharsets.UTF_8);
-                Log.i(TAG, "G925 2.28: enabled four additional run-ahead frames");
+                Log.i(TAG, "G925 2.32: low-latency default run-ahead");
             }
             if (!marker.createNewFile() && !marker.exists()) {
-                Log.w(TAG, "could not mark the one-time run-ahead migration");
+                Log.w(TAG, "could not mark low-latency migration");
             }
-        } catch (IOException exception) {
-            Log.w(TAG, "could not enable default run-ahead; leave saved settings unchanged",
-                    exception);
+        } catch (IOException e) {
+            Log.w(TAG, "could not change run-ahead; keeping existing settings", e);
         }
     }
 

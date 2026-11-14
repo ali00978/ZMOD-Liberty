@@ -921,9 +921,9 @@ public class LauncherActivity extends Activity {
                     new String[] {"Default", "Off", "Original"},
                     new String[] {"off", "original"}),
             new GraphicsSetting("Run-ahead frames",
-                    "0-4 EXTRA guest frames: 4 can raise throughput, but increases input delay",
+                    "1-frame low-latency default; 4 may improve throughput but delays controls",
                     new String[] {"gta4_extra_frames_in_flight"},
-                    new String[] {"Default (4)", "0", "1", "2", "3", "4"},
+                    new String[] {"Default (1)", "0", "1", "2", "3", "4"},
                     new String[] {"0", "1", "2", "3", "4"}),
             new GraphicsSetting("CPU boost",
                     "Maximum asks Android for 16ms CPU work (60 FPS goal, warmer). "

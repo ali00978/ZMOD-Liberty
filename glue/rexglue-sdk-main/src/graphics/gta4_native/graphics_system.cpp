@@ -362,7 +362,7 @@ REXCVAR_DEFINE_BOOL(gta4_native_merge_indexed_draws, true, "GTA IV/Graphics/Nati
                     "adjacent index ranges as one draw");
 REXCVAR_DEFINE_BOOL(gta4_native_merge_sparse_indexed_draws, true,
                     "GTA IV/Graphics/Native Renderer",
-                    "Batch 4+ nonadjacent opaque triangle-list draws with identical state "
+                    "Batch 3 small or 4+ nonadjacent opaque triangle-list draws with identical state "
                     "as one indexed Vulkan draw using byte-identical index ranges");
 REXCVAR_DEFINE_BOOL(gta4_native_merge_sequential_draws, true, "GTA IV/Graphics/Native Renderer",
                     "Merge consecutive nonindexed triangle-list draws that read exactly adjacent "
@@ -24681,7 +24681,7 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
   if (!command.pipeline_state || !command.index_buffer || !command.shader_state) {
     return fail("command-state-or-index");
   }
-  const bool sparse_batch = sparse_indexed_range_count_ >= 4;
+  const bool sparse_batch = sparse_indexed_range_count_ >= 3;
   DrawIndexedPrimitiveCommand draw{};
   std::memcpy(&draw, command.bytes.data(), sizeof(draw));
   if (indexed_merge_count_override_ && !sparse_batch)
@@ -36747,8 +36747,8 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
         }
       }
       const bool use_sparse_batch =
-          sparse_allowed && sparse_has_gap && sparse_count >= 4 &&
-          sparse_count >= merged_count + 2;
+          sparse_allowed && ShouldBatchNativeSparseIndexDraws(
+              sparse_count, merged_count, sparse_indices, sparse_has_gap);
       if (use_sparse_batch) {
         sparse_indexed_range_count_ = uint32_t(sparse_count);
         command_recorded = RecordIndexedPrimitive(command_buffer, command, target.width,

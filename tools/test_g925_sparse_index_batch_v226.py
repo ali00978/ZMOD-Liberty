@@ -21,8 +21,8 @@ assert "std::memcpy(destination.data() + output_offset," in header
 assert "sparse_indexed_range_count_ = 0;" in graphics_header
 assert "gta4_native_merge_sparse_indexed_draws" in source
 assert "sparse_indexed_ranges_[sparse_count++]" in source
-assert "sparse_has_gap && sparse_count >= 4" in source
-assert "sparse_count >= merged_count + 2" in source
+assert "ShouldBatchNativeSparseIndexDraws(" in source
+assert "sparse_count, merged_count, sparse_indices, sparse_has_gap" in source
 assert "!command.fixed_function_state.blend_enable" in source
 assert "!command.fixed_function_state.stencil_enable" in source
 assert "!command.pipeline_state->vertex_shader_resource->uses_vertex_index" in source
@@ -32,7 +32,7 @@ assert "water_query_index == UINT32_MAX" in source
 assert "RecordIndexedPrimitive(command_buffer, command, target.width," in source
 assert "host_index_count = total;" in source
 assert "host_start_index = 0;" in source
-assert "const bool sparse_batch = sparse_indexed_range_count_ >= 4;" in source
+assert "const bool sparse_batch = sparse_indexed_range_count_ >= 3;" in source
 assert "REXCVAR_GET(gta4_native_vertex_cache_order) && !sparse_batch" in source
 assert "kSparseIndexedDrawsMerged" in source and "kSparseIndexedDrawsMerged" in counter_h
 assert "sparse-indexed-draws-merged" in counter_cpp
