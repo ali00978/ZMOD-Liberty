@@ -32,9 +32,9 @@ assert "vkCmdBeginRendering(command_buffer, &rendering_info)" in code
 gradle=(root/"os/android/app/build.gradle.kts").read_text()
 # This test checks the v2.31 renderer functionality across later releases.
 # Never pin its integration to the exact APK versionCode / versionSuffix.
-version = re.search(r"versionCode\\s*=\\s*(\\d+)", gradle)
+version = re.search(r"versionCode\s*=\s*(\d+)", gradle)
 assert version and int(version.group(1)) >= 59
-assert re.search(r'val versionSuffix\\s*=\\s*"-alpha-2\\.\\d+-g925-[^"]+"', gradle)
+assert re.search(r'val versionSuffix\s*=\s*"-alpha-2\.\d+-g925-[^"]+"', gradle)
 workflow=(root/".github/workflows/build-android-apk.yml").read_text()
 assert "python tools/test_g925_gpu_clear_v231.py" in workflow
 print("PASS: safe full-color loadOp clears and zero-area clear rejection")
