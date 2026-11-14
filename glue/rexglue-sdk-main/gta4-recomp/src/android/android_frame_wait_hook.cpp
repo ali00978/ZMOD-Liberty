@@ -16,6 +16,7 @@
 
 #include "android/android_performance_hint.h"
 #include "android/g925_frame_health.h"
+#include "android/g925_run_ahead_policy.h"
 
 #include <atomic>
 
@@ -31,10 +32,10 @@
 // own guard now.
 REXCVAR_DEFINE_BOOL(gta4_frame_wait_sleep, true, "GTA IV/Performance",
                     "Sleep instead of spinning while the title waits for a frame slot");
-REXCVAR_DEFINE_UINT32(gta4_extra_frames_in_flight, 0, "GTA IV/Performance",
-                      "Frames the title may run ahead beyond its own limit of two pending "
-                      "frames (more throughput, one frame of input latency each)")
-    .range(0, 2);
+REXCVAR_DEFINE_UINT32(gta4_extra_frames_in_flight, 1, "GTA IV/Performance",
+                      "Additional guest frames ahead of the original two-frame wait limit "
+                      "(0-4; higher throughput potential, higher memory and input latency)")
+    .range(0, 4);
 
 // Latest game update rate, shown by the in-game "Show FPS" overlay.
 std::atomic<float> g_liberty_title_fps{0.0f};
@@ -102,7 +103,10 @@ extern "C" void sub_82A46D70(PPCContext& ctx, uint8_t* base) {
   }
   const uint32_t extra = REXCVAR_GET(gta4_extra_frames_in_flight);
   if (extra) {
-    pending = pending > extra ? pending - extra : 0;
+    // The guest sees the relaxed wait budget; the real native pending
+    // counter and Vulkan GPU completion remain unchanged. The renderer's
+    // independent, bounded submission queue still applies backpressure.
+    pending = gta4::android::G925AdjustedPendingFrames(pending, extra);
     REX_STORE_U32(out + 8, pending);
   }
   if (pending >= 2 && REXCVAR_GET(gta4_frame_wait_sleep)) {

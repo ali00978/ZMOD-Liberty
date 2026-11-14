@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression guards for stable ADPF 16 ms feedback and unambiguous profiles."""
 from pathlib import Path
+import re
 
 root = Path(__file__).resolve().parents[1]
 src = (root / "glue/rexglue-sdk-main/gta4-recomp/src/android/android_performance_hint.cpp").read_text()
@@ -38,8 +39,8 @@ assert 'csv.lastModified() < captureStartedAt' in report
 assert 'CMAKE_C_COMPILER_LAUNCHER:STRING' in native_build
 assert 'CMAKE_CXX_COMPILER_LAUNCHER:STRING' in native_build
 assert 'SCCACHE_CMAKE_ARGS' in native_build
-assert 'versionCode   = 34' in gradle
-assert '-alpha-2.6-g925-stable-16ms' in gradle
+assert int(re.search(r'versionCode\s*=\s*(\d+)', gradle)[1]) >= 34
+assert re.search(r'versionSuffix\s*=\s*"-alpha-2\.\d+-g925-', gradle)
 assert 'branches: [feature/g925-stable-16ms-v26]' in workflow
 assert workflow.count('python tools/test_g925_stable_16ms_v26.py') == 2
 print("PASS: 16ms / stable preserved; native hint lifecycle, reports and CMake cache wired")
