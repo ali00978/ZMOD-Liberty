@@ -15,10 +15,22 @@ class G925StableHintThreads {
   explicit G925StableHintThreads(size_t cap = 6) : cap_(std::max<size_t>(1, cap)) {}
   void Reset() { chosen_.clear(); misses_.clear(); }
   template <typename Alive>
-  const std::vector<Tid>& Select(const std::vector<Tid>& busy, Alive alive) {
+  const std::vector<Tid>& Select(const std::vector<Tid>& busy, Alive alive,
+                                const std::vector<Tid>& critical = {}) {
     std::vector<Tid> next;
     next.reserve(cap_);
+    // A newly created game/recorder thread must not wait for the two-sample
+    // grace period of an incidental background worker in a full session.
+    for (Tid id : critical) {
+      if (next.size() >= cap_) break;
+      if (alive(id) && std::find(next.begin(), next.end(), id) == next.end()) {
+        next.push_back(id);
+        misses_[id] = 0;
+      }
+    }
     for (Tid id : chosen_) {
+      if (std::find(next.begin(), next.end(), id) != next.end()) continue;
+      if (next.size() >= cap_) { misses_.erase(id); continue; }
       if (!alive(id)) { misses_.erase(id); continue; }
       auto& miss = misses_[id];
       if (std::find(busy.begin(), busy.end(), id) != busy.end()) {
