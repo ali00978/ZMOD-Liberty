@@ -36,6 +36,9 @@ bool g_custom = false;
 std::string g_system_identity;
 void* g_loader = nullptr; // Deliberately retained until process exit.
 PFN_vkGetInstanceProcAddr g_get = nullptr;
+// Resolved once when the selected Vulkan loader has passed its startup probe.
+// Device command pointers are requested often by the renderer; do not dlsym each time.
+PFN_vkGetDeviceProcAddr g_device_get = nullptr;
 PFN_vkDestroyInstance g_destroy = nullptr;
 std::string g_arguments;
 std::string g_status = "{\"ok\":false,\"error\":\"Driver bridge not initialized\"}";
@@ -469,6 +472,10 @@ EXPORT jstring JNICALL Java_com_libertyrecomp_DriverBridge_nativeInit(
   if (!error.empty()) {
     g_status = Failure(error);
   } else {
+    // The loader is fixed for this process. Publish the cached pointer before
+    // g_ready.store(release) so dispatch readers see a fully initialized state.
+    g_device_get = reinterpret_cast<PFN_vkGetDeviceProcAddr>(
+        dlsym(g_loader, "vkGetDeviceProcAddr"));
     g_status = "{\"ok\":true,\"mode\":" + Quote(g_custom ? "turnip" : "system") +
         ",\"error\":\"\",\"fallback_from\":" + Quote(fallback_from) +
         ",\"loader_path\":" + Quote(LoaderPath()) +
@@ -525,8 +532,7 @@ EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance
 
 EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice device, const char* name) {
   if (!g_ready.load(std::memory_order_acquire)) return nullptr;
-  const auto fn = reinterpret_cast<PFN_vkGetDeviceProcAddr>(dlsym(g_loader, "vkGetDeviceProcAddr"));
-  return fn ? fn(device, name) : nullptr;
+  return g_device_get ? g_device_get(device, name) : nullptr;
 }
 
 EXPORT VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceVersion(uint32_t* version) {

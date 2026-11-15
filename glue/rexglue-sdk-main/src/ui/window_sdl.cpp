@@ -33,6 +33,7 @@
 #include <rex/diagnostics/policy.h>
 #include <rex/platform.h>
 #include <rex/ui/flags.h>
+#include <rex/ui/presenter.h>
 #include <rex/ui/sdl_virtual_key.h>
 
 #if REX_PLATFORM_WIN32
@@ -622,6 +623,14 @@ void WindowSDL::HandleWindowEvent(SDL_Event& event) {
       RefreshPhysicalSafeArea();
       break;
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
+#if REX_PLATFORM_ANDROID
+      // Focus can return after a notification without any swapchain change.
+      // Invalidate only the old presentation phase, on the next paint owner
+      // turn, instead of triggering a costly new Vulkan surface.
+      if (auto* active_presenter = presenter()) {
+        active_presenter->RequestFramePacerResync();
+      }
+#endif
       OnFocusUpdate(true, destruction_receiver);
       break;
     case SDL_EVENT_WINDOW_FOCUS_LOST:
@@ -925,6 +934,14 @@ void WindowSDL::HandleAppLifecycleEvent(SDL_Event& event) {
     case SDL_EVENT_DID_ENTER_FOREGROUND:
     case SDL_EVENT_WINDOW_RESTORED:
     case SDL_EVENT_WINDOW_SHOWN:
+    case SDL_EVENT_WINDOW_FOCUS_GAINED:
+    case SDL_EVENT_WINDOW_EXPOSED:
+      // Android's notification shade can cause a MINIMIZED/HIDDEN event
+      // followed by FOCUS_GAINED or EXPOSED without a matching RESTORED.
+      // In that case the Vulkan surface was detached above, and otherwise
+      // stays detached indefinitely even though the ANativeWindow is back.
+      // Only reconnect on a real detached->attached transition; a normal
+      // notification focus change must not rebuild a healthy swapchain.
       if (surface_detached_ && GetNativeWindowHandle()) {
         surface_detached_ = false;
         __android_log_print(ANDROID_LOG_WARN, "LibertyRecomp", "surface: foregrounded, attaching %p", GetNativeWindowHandle());

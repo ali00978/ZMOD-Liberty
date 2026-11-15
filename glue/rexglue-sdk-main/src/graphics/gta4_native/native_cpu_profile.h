@@ -22,6 +22,7 @@ namespace rex::graphics::gta4_native::profile {
               X(Submit, "submission") X(Cleanup, "cleanup")
 #define NATIVE_CPU_OPERATIONS(X)                                                                     \
   X(PublishFrame, "publish-frame")                                                                   \
+  X(PresenterWait, "presenter-publication-wait")                                                       \
   X(RefreshOutput, "refresh-output") X(Callback, "render-callback") X(                               \
       CompleteSlot,                                                                                  \
       "complete-frame-slot") X(FenceWait,                                                            \

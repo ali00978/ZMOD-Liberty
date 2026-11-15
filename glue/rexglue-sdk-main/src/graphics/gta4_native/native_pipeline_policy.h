@@ -210,4 +210,15 @@ inline NativeBlendConstantSelection SelectNativeBlendConstants(
   return result;
 }
 
+// On native Vulkan, constant-alpha factors do not need portability emulation.
+// Skip computing four target component masks when the selector ignores them.
+inline NativeBlendConstantSelection SelectNativeDrawBlendConstants(
+    const std::array<uint32_t, kNativeFixedRenderTargetCount>& controls,
+    uint32_t write_mask, const std::array<VkFormat, kNativeFixedRenderTargetCount>& formats,
+    const std::array<float, 4>& constants, bool constant_alpha_supported) {
+  if (constant_alpha_supported) return {constants, true};
+  return SelectNativeBlendConstants(controls, NativeBlendWriteMask(write_mask, formats),
+                                    constants, false);
+}
+
 }  // namespace rex::graphics::gta4_native
