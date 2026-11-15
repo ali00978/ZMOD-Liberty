@@ -50,7 +50,9 @@ def changed_file_is_launcher_only(path: str) -> bool:
         "os/android/app/src/main/AndroidManifest.xml",
         "os/android/app/src/main/assets/default_args.txt",
         ".github/workflows/build-android-apk.yml",
+        "os/android/scripts/build_apk.sh",
         "tools/fixtures/g925/G925ProfileReportTest.java",
+        "tools/fixtures/g925/G925NativeDefaultsTest.java",
     }
     if path in safe_exact or any(path.startswith(p) for p in safe_app_paths):
         return True
@@ -146,6 +148,19 @@ def select_build_mode(event: str, requested_mode: str, requested_base: str,
             print(f"Base run {run_id} cannot be reused: {exc}")
             continue
         return "java-only", run_id
+    # First standalone G925 Native commit has no same-branch artifact yet.
+    # Reuse ONLY the pinned, successful v2.36 Mali ARMv9 build and ONLY while
+    # validate() proves that not a single native source has changed. This
+    # avoids a redundant 20+ minute native recompilation for a Java/Gradle
+    # packaging-only split; unrelated PRs continue to fail closed.
+    if (repo == "ali00978/ZMOD-Liberty"
+            and branch == "feature/g925-native-standalone-app-v1"):
+        verified_v236_run_id = 43677943951
+        try:
+            validate(verified_v236_run_id, repo, target, gpu, cpu, token)
+            return "java-only", str(verified_v236_run_id)
+        except UnsafeFastBuild as exc:
+            print(f"G925 Native engine reuse rejected, compiling full APK: {exc}")
     return "full", ""
 
 
