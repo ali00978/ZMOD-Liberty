@@ -24,18 +24,22 @@ class NativeTextureUploadBatch {
     std::vector<VkBufferImageCopy> copies;
   };
 
-  bool full() const { return uploads_.size() == kCapacity; }
-  bool empty() const { return uploads_.empty(); }
+  // The old std::vector dynamically grew while the game prepared many
+  // texture uploads for a frame. Fixed 128 slots avoid heap growth and copies
+  // in the CPU-critical recording path; the exact Vulkan barrier and copy
+  // sequence is unchanged.
+  bool full() const { return count_ == kCapacity; }
+  bool empty() const { return count_ == 0; }
   void Add(Upload upload) {
     assert(!full() && upload.image && upload.buffer && !upload.copies.empty());
-    uploads_.push_back(std::move(upload));
+    uploads_[count_++] = std::move(upload);
   }
 
   template <typename EmitBarriers, typename EmitCopy>
   void Flush(EmitBarriers&& emit_barriers, EmitCopy&& emit_copy) {
     if (empty()) return;
     std::array<VkImageMemoryBarrier, kCapacity> barriers;
-    for (size_t i = 0; i < uploads_.size(); ++i) {
+    for (size_t i = 0; i < count_; ++i) {
       auto& barrier = barriers[i];
       barrier = {};
       barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -47,10 +51,10 @@ class NativeTextureUploadBatch {
       barrier.image = uploads_[i].image;
       barrier.subresourceRange = uploads_[i].range;
     }
-    const std::span<const VkImageMemoryBarrier> span(barriers.data(), uploads_.size());
+    const std::span<const VkImageMemoryBarrier> span(barriers.data(), count_);
     emit_barriers(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, span);
-    for (const auto& upload : uploads_) emit_copy(upload);
-    for (size_t i = 0; i < uploads_.size(); ++i) {
+    for (size_t i = 0; i < count_; ++i) emit_copy(uploads_[i]);
+    for (size_t i = 0; i < count_; ++i) {
       auto& barrier = barriers[i];
       barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
       barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
@@ -60,11 +64,15 @@ class NativeTextureUploadBatch {
     emit_barriers(VK_PIPELINE_STAGE_TRANSFER_BIT,
                   VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                   span);
-    uploads_.clear();
+    // Release source copy lists without discarding the fixed slot capacity.
+    // Neither the batch nor these CPU vectors own Vulkan resources.
+    for (size_t i = 0; i < count_; ++i) uploads_[i] = {};
+    count_ = 0;
   }
 
  private:
-  std::vector<Upload> uploads_;
+  std::array<Upload, kCapacity> uploads_{};
+  size_t count_ = 0;
 };
 
 }  // namespace rex::graphics::gta4_native
