@@ -188,7 +188,9 @@ jobs:
       - name: Replay G925 draw preparation with NDK Vulkan headers
         env:
           G925_TEST_CXX: clang++
-        run: python tools/test_g925_draw_preparation_v211.py
+        run: |
+          python tools/test_g925_draw_preparation_v211.py
+          python tools/test_g925_native_upload_v2.py
 
       - name: Restore build cache
         id: cache
@@ -323,14 +325,14 @@ jobs:
           APK="os/android/app/build/outputs/apk/debug/app-debug.apk"
           AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt.exe"
           "$AAPT" dump badging "$APK" | grep -F "package: name='com.zmodliberty.g925native'"
-          cp "$APK" ZMOD-Liberty-G925-Native-v1-armv9.apk
+          cp "$APK" ZMOD-Liberty-G925-Native-v2-armv9.apk
 
       - name: Upload independent G925 Native APK
         if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
         uses: actions/upload-artifact@v4
         with:
-          name: ZMOD-Liberty-G925-Native-v1-armv9.apk
-          path: ZMOD-Liberty-G925-Native-v1-armv9.apk
+          name: ZMOD-Liberty-G925-Native-v2-armv9.apk
+          path: ZMOD-Liberty-G925-Native-v2-armv9.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -458,13 +460,13 @@ jobs:
           APK="os/android/app/build/outputs/apk/debug/app-debug.apk"
           AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt.exe"
           "$AAPT" dump badging "$APK" | grep -F "package: name='com.zmodliberty.g925native'"
-          cp "$APK" ZMOD-Liberty-G925-Native-v1-armv9.apk
+          cp "$APK" ZMOD-Liberty-G925-Native-v2-armv9.apk
 
       - name: Upload independent G925 Native APK
         if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
         uses: actions/upload-artifact@v4
         with:
-          name: ZMOD-Liberty-G925-Native-v1-armv9.apk
-          path: ZMOD-Liberty-G925-Native-v1-armv9.apk
+          name: ZMOD-Liberty-G925-Native-v2-armv9.apk
+          path: ZMOD-Liberty-G925-Native-v2-armv9.apk
           if-no-files-found: error
           retention-days: 30
