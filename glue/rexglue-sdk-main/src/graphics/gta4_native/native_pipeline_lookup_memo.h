@@ -62,9 +62,19 @@ class NativePipelineLookupMemo {
 
   Pipeline Find(const void* owner, const FixedState& fixed, const Context& context) const {
     if (!owner || !context.lifetime) return Pipeline{};
-    for (const auto& entry : entries_) {
-      if (entry.pipeline && owner == entry.owner && context == entry.context &&
-          fixed == entry.fixed) return entry.pipeline;
+    const auto matches = [&](size_t i) {
+      const auto& entry = entries_[i];
+      return entry.pipeline && owner == entry.owner && context == entry.context &&
+             fixed == entry.fixed;
+    };
+    // Successful pipeline lookups are usually repeated on the next draw.
+    // Try the most recently matched entry before comparing other fixed states.
+    if (matches(last_hit_)) return entries_[last_hit_].pipeline;
+    for (size_t i = 0; i < entries_.size(); ++i) {
+      if (i != last_hit_ && matches(i)) {
+        last_hit_ = i;
+        return entries_[i].pipeline;
+      }
     }
     return Pipeline{};
   }
@@ -73,9 +83,17 @@ class NativePipelineLookupMemo {
   // was captured (0 = none). Equal signatures stand for equal fixed states.
   Pipeline FindSigned(const void* owner, uint64_t signature, const Context& context) const {
     if (!owner || !context.lifetime || !signature) return Pipeline{};
-    for (const auto& entry : entries_) {
-      if (entry.pipeline && entry.signature == signature && owner == entry.owner &&
-          context == entry.context) return entry.pipeline;
+    const auto matches = [&](size_t i) {
+      const auto& entry = entries_[i];
+      return entry.pipeline && entry.signature == signature && owner == entry.owner &&
+             context == entry.context;
+    };
+    if (matches(last_hit_)) return entries_[last_hit_].pipeline;
+    for (size_t i = 0; i < entries_.size(); ++i) {
+      if (i != last_hit_ && matches(i)) {
+        last_hit_ = i;
+        return entries_[i].pipeline;
+      }
     }
     return Pipeline{};
   }
@@ -85,14 +103,17 @@ class NativePipelineLookupMemo {
     if (!owner || !context.lifetime || !pipeline) {
       return;
     }
-    for (auto& entry : entries_) {
+    for (size_t i = 0; i < entries_.size(); ++i) {
+      auto& entry = entries_[i];
       if (entry.owner == owner && entry.context == context && entry.fixed == fixed) {
         entry.pipeline = pipeline;
         if (signature) entry.signature = signature;
+        last_hit_ = i;
         return;
       }
     }
     entries_[next_] = {owner, fixed, context, pipeline, signature};
+    last_hit_ = next_;
     next_ = (next_ + 1) % entries_.size();
   }
 
@@ -106,6 +127,9 @@ class NativePipelineLookupMemo {
   };
   std::array<Entry, 4> entries_{};
   size_t next_ = 0;
+  // A hint only: exact owner, epoch, context and state are still validated.
+  // Mutated by const Find because memo lives in the recorder's own snapshot.
+  mutable size_t last_hit_ = 0;
 };
 
 }  // namespace rex::graphics::gta4_native

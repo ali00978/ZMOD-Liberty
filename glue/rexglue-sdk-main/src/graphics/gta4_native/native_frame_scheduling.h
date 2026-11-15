@@ -29,6 +29,37 @@ inline constexpr uint32_t kNativeBufferCacheLimitMiB = 256;
 inline constexpr size_t kNativeMaximumVertexConversionsPerBuffer = 2;
 inline constexpr uint32_t kNativeUploadShrinkObservationFrames = 120;
 
+// Keep bulk Vulkan surface destruction off the critical presentation frame.
+// Pending lifetimes remain invisible to new draws; final destruction is still
+// gated by completed GPU submissions. Idle/no-frame releases may drain fully
+// so a paused title does not retain a backlog forever.
+inline constexpr size_t kNativeSurfaceRetirementsPerFrame = 6;
+constexpr size_t NativeSurfaceRetirementLimit(bool force_drain) {
+  return force_drain ? size_t(-1) : kNativeSurfaceRetirementsPerFrame;
+}
+constexpr bool ShouldKeepNativeSurfacePending(uint64_t last_used_submission,
+                                              uint64_t completed_submission,
+                                              size_t retired_this_frame, bool force_drain) {
+  // A GPU-in-flight resource is never destroyed; budget exhaustion only
+  // delays a completed release until a later housekeeping pass.
+  return last_used_submission > completed_submission ||
+         retired_this_frame >= NativeSurfaceRetirementLimit(force_drain);
+}
+
+// Aged, under-budget host buffers can be reclaimed over several frames,
+// avoiding a sudden 64-resource/16 MiB CPU destructor burst. Under-budget\n// maintenance is deliberately capped at 8 resources/2 MiB to spread\n// expensive host frees over several title frames. Under memory
+// pressure retain the previous more aggressive bounds to prevent OOM.
+struct NativeBufferReclamationWorkLimit {
+  size_t max_resources = 0;
+  uint64_t max_bytes = 0;
+};
+constexpr NativeBufferReclamationWorkLimit GetNativeBufferReclamationWorkLimit(
+    uint64_t retained_bytes, uint64_t budget_bytes) {
+  return retained_bytes > budget_bytes
+      ? NativeBufferReclamationWorkLimit{64, 16ull * 1024 * 1024}
+      : NativeBufferReclamationWorkLimit{8, 2ull * 1024 * 1024};
+}
+
 // Internal lock flushes submit GPU work but are not title presents. Keep the
 // resource-maintenance clock on the most recent title frame. A real present
 // with frame zero (startup, reset, or wrap) remains a real clock observation.

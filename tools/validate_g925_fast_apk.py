@@ -12,7 +12,7 @@ import json
 import os
 import re
 import sys
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
@@ -34,6 +34,8 @@ def github_api(path: str, *, token: str, repo: str) -> dict:
             return json.load(response)
     except HTTPError as exc:
         raise UnsafeFastBuild(f"GitHub returned HTTP {exc.code} for {path}") from exc
+    except (URLError, TimeoutError, ValueError) as exc:
+        raise UnsafeFastBuild(f"Could not verify GitHub response for {path}") from exc
 
 
 def changed_file_is_launcher_only(path: str) -> bool:
@@ -48,6 +50,9 @@ def changed_file_is_launcher_only(path: str) -> bool:
         "os/android/app/src/main/AndroidManifest.xml",
         "os/android/app/src/main/assets/default_args.txt",
         ".github/workflows/build-android-apk.yml",
+        "os/android/scripts/build_apk.sh",
+        "tools/fixtures/g925/G925ProfileReportTest.java",
+        "tools/fixtures/g925/G925NativeDefaultsTest.java",
     }
     if path in safe_exact or any(path.startswith(p) for p in safe_app_paths):
         return True
@@ -98,8 +103,11 @@ def validate(run_id: int, repo: str, target: str, gpu: str, cpu: str, token: str
         files = compare.get("files", [])
         if len(files) >= 300:
             raise UnsafeFastBuild("GitHub comparison is too large for safe fast mode")
-        disallowed = [f.get("filename", "?") for f in files
-                      if not changed_file_is_launcher_only(f.get("filename", ""))]
+        # A rename out of a native path still changes native sources. Check both
+        # sides instead of accepting only the new launcher-looking filename.
+        disallowed = [path for f in files
+                      for path in [f.get("filename", ""), f.get("previous_filename")]
+                      if path is not None and not changed_file_is_launcher_only(path)]
         if disallowed:
             raise UnsafeFastBuild(
                 "Native or unknown files changed since base APK. Use FULL mode. "
@@ -111,19 +119,77 @@ def validate(run_id: int, repo: str, target: str, gpu: str, cpu: str, token: str
     return found[0]
 
 
+def select_build_mode(event: str, requested_mode: str, requested_base: str,
+                      repo: str, target: str, branch: str, gpu: str, cpu: str,
+                      token: str) -> tuple[str, str]:
+    """Use a same-branch APK only after the existing source/artifact guard passes."""
+    if event == "workflow_dispatch":
+        if requested_mode == "java-only":
+            if not re.fullmatch(r"[0-9]{5,20}", requested_base):
+                raise UnsafeFastBuild("Java-only mode requires an explicit base run ID")
+            return "java-only", requested_base
+        return "full", ""
+    if event != "pull_request" or gpu != "mali" or cpu != "armv9" or not branch:
+        return "full", ""
+    try:
+        runs = github_api(
+            "actions/workflows/build-android-apk.yml/runs?status=success&per_page=3&branch="
+            + quote(branch, safe=""), token=token, repo=repo).get("workflow_runs", [])
+    except UnsafeFastBuild as exc:
+        print(f"Automatic native reuse unavailable; selecting full build: {exc}")
+        return "full", ""
+    for run in runs[:3]:
+        run_id = str(run.get("id", ""))
+        if run.get("head_branch") != branch or not re.fullmatch(r"[0-9]{5,20}", run_id):
+            continue
+        try:
+            validate(int(run_id), repo, target, gpu, cpu, token)
+        except UnsafeFastBuild as exc:
+            print(f"Base run {run_id} cannot be reused: {exc}")
+            continue
+        return "java-only", run_id
+    # First standalone G925 Native commit has no same-branch artifact yet.
+    # Reuse ONLY the pinned, successful v2.36 Mali ARMv9 build and ONLY while
+    # validate() proves that not a single native source has changed. This
+    # avoids a redundant 20+ minute native recompilation for a Java/Gradle
+    # packaging-only split; unrelated PRs continue to fail closed.
+    if (repo == "ali00978/ZMOD-Liberty"
+            and branch == "feature/g925-native-standalone-app-v1"):
+        verified_v236_run_id = 43677943951
+        try:
+            validate(verified_v236_run_id, repo, target, gpu, cpu, token)
+            return "java-only", str(verified_v236_run_id)
+        except UnsafeFastBuild as exc:
+            print(f"G925 Native engine reuse rejected, compiling full APK: {exc}")
+    return "full", ""
+
+
 def main() -> int:
     try:
-        run_text = os.environ.get("G925_BASE_RUN_ID", "")
-        if not re.fullmatch(r"[0-9]{5,20}", run_text):
-            raise UnsafeFastBuild(
-                "Set a successful baseline run ID in the 'base_run_id' input")
         repo = os.environ.get("GITHUB_REPOSITORY", "")
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
             raise UnsafeFastBuild("Invalid repository")
         token = os.environ.get("GH_TOKEN", "")
         if not token:
             raise UnsafeFastBuild("Missing Actions-read GitHub token")
-        validate(int(run_text), repo, os.environ.get("GITHUB_SHA", ""),
+        target = os.environ.get("G925_TARGET_SHA") or os.environ.get("GITHUB_SHA", "")
+        if not re.fullmatch(r"[a-f0-9]{40}", target):
+            raise UnsafeFastBuild("Target has no valid source SHA")
+        run_text = os.environ.get("G925_BASE_RUN_ID", "")
+        if sys.argv[1:] == ["--select-mode"]:
+            mode, base = select_build_mode(
+                os.environ.get("GITHUB_EVENT_NAME", ""),
+                os.environ.get("G925_REQUESTED_MODE", "full"), run_text,
+                repo, target, os.environ.get("G925_HEAD_BRANCH", ""),
+                os.environ.get("LIBERTY_GPU", ""), os.environ.get("LIBERTY_CPU", ""), token)
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                output.write(f"build_mode={mode}\nbase_run_id={base}\n")
+            print(f"Selected {mode}; compatible base run: {base or 'none'}")
+            return 0
+        if not re.fullmatch(r"[0-9]{5,20}", run_text):
+            raise UnsafeFastBuild(
+                "Set a successful baseline run ID in the 'base_run_id' input")
+        validate(int(run_text), repo, target,
                  os.environ.get("LIBERTY_GPU", ""), os.environ.get("LIBERTY_CPU", ""), token)
         return 0
     except UnsafeFastBuild as exc:

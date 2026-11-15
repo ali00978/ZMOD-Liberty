@@ -15,18 +15,24 @@ class NativeDrawStateCache {
  public:
   void Reset() { *this = {}; }
 
-  bool UpdatePipeline(uint64_t pipeline) {
+  bool UpdatePipeline(uint64_t pipeline, bool all_tracked_state_dynamic = false) {
     if (!pipeline_.Update(pipeline)) {
       return false;
     }
-    // A different pipeline can contain static state that invalidates dynamic
-    // values. Conservatively re-emit them even for compatible native pipelines.
-    viewport_ = {};
-    scissor_ = {};
-    depth_bias_ = {};
-    stencil_ = {};
-    blend_constants_ = {};
-    push_constants_ = {};
+    // Native draw pipelines declare ALL of these states dynamic. Vulkan keeps
+    // their values across those binds. External/static pipelines still use the
+    // conservative path (or Reset), so they cannot leave stale cached state.
+    if (!all_tracked_state_dynamic) {
+      viewport_ = {};
+      scissor_ = {};
+      depth_bias_ = {};
+      stencil_ = {};
+      blend_constants_ = {};
+      push_constants_ = {};
+    }
+    // A pipeline bind does not erase push constants. Native draws may retain
+    // them; UpdatePushConstants still requires the exact same layout and all
+    // three addresses. External paths retain conservative invalidation.
     return true;
   }
 
@@ -40,6 +46,23 @@ class NativeDrawStateCache {
   }
   bool UpdateDepthBias(const std::array<uint32_t, 3>& bits) { return depth_bias_.Update(bits); }
   bool UpdateStencil(const std::array<uint32_t, 6>& faces) { return stencil_.Update(faces); }
+  // Emit only changed reference/compare/write fields. Equal face values can
+  // share one front-and-back command; unequal values remain independent.
+  template <typename Emit>
+  void EmitStencilChanges(const std::array<uint32_t, 6>& faces, Emit emit) {
+    for (size_t field = 0; field < 3; ++field) {
+      const bool front = !stencil_.last || (*stencil_.last)[field] != faces[field];
+      const bool back = !stencil_.last || (*stencil_.last)[field + 3] != faces[field + 3];
+      if (!front && !back) continue;
+      if (faces[field] == faces[field + 3]) {
+        emit(field, true, true, faces[field]);
+      } else {
+        if (front) emit(field, true, false, faces[field]);
+        if (back) emit(field, false, true, faces[field + 3]);
+      }
+    }
+    stencil_.Update(faces);
+  }
   bool UpdateBlendConstants(const std::array<uint32_t, 4>& bits) {
     return blend_constants_.Update(bits);
   }
@@ -52,6 +75,10 @@ class NativeDrawStateCache {
                           uint64_t offset) {
     if (binding >= vertex_buffers_.size()) return true;
     return vertex_buffers_[binding].Update({command_buffer, buffer, offset});
+  }
+  bool UpdateIndexBuffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset,
+                         uint32_t index_type) {
+    return index_buffer_.Update({command_buffer, buffer, offset, uint64_t(index_type)});
   }
 
  private:
@@ -82,6 +109,7 @@ class NativeDrawStateCache {
   Tracked<std::array<uint32_t, 4>> blend_constants_;
   Tracked<LayoutValues<3>> push_constants_;
   std::array<Tracked<std::array<uint64_t, 3>>, 32> vertex_buffers_;
+  Tracked<std::array<uint64_t, 4>> index_buffer_;
 };
 
 }  // namespace rex::graphics::gta4_native

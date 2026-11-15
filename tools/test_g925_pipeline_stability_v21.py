@@ -22,7 +22,7 @@ assert 'never discards demanded work' in unit
 assert 'promotes a duplicate speculative request' in unit
 assert 'CHECK_FALSE(can_displace_demanded)' in unit
 assert 'CHECK(evicted2)' in unit
-assert '--gta4_native_max_queued_frames=3' in source
+assert '--gta4_native_max_queued_frames=4' in source
 java = (root / "os/android/app/src/main/java/com/libertyrecomp/LauncherActivity.java").read_text()
 assert 'Button shareStutter = button("SHARE STUTTER REPORT"' in java
 assert 'shareG925StutterReport()' in java
@@ -34,5 +34,6 @@ assert 'recent.size() > 240' in java
 assert 'play for 2 minutes' in java
 assert 'kNativeTextureEvictionGraceFrames = 240;' in old
 assert 'branches: [feature/g925-stable-16ms-v26]' in workflow
-assert "github.event_name == 'push'" in workflow
+assert "needs.plan.outputs.build_mode == 'full'" in workflow
+assert 'python3 tools/validate_g925_fast_apk.py --select-mode' in workflow
 print("PASS: demanded pipeline priority, capacity rejection and stock Mali renderer preserved")
