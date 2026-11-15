@@ -17,8 +17,8 @@ assert "if (matches(last_hit_))" in pipeline
 assert "key.descriptor[5] * 0x85EBCA6Bu" in surface
 assert "key.descriptor[4] * 0xC2B2AE35u" in surface
 assert "key.descriptor[3] * 0x27D4EB2Du" in surface
-assert "hot_.valid && hot_.key == key" in resolve
-assert "entries_.clear(); hot_.valid = false;" in resolve
+assert "hot_[i].valid && hot_[i].key == key" in resolve
+assert "for (auto& recent : hot_) recent.valid = false;" in resolve
 compiler = os.environ.get("G925_TEST_CXX") or shutil.which("g++") or shutil.which("clang++")
 if not compiler:
     raise SystemExit("C++20 compiler required")
