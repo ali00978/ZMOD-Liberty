@@ -16,7 +16,7 @@ class NativeResolveDescriptorCache {
     uint32_t image_layout = 0;
     bool operator==(const Key&) const = default;
   };
-  struct Statistics { uint64_t hits = 0, misses = 0, inserts = 0; };
+  struct Statistics { uint64_t hits = 0, misses = 0, inserts = 0, hot_hits = 0; };
   void BeginScope(uint64_t command_buffer, uint64_t pool) {
     if (command_buffer_ != command_buffer || pool_ != pool) {
       Reset(); command_buffer_ = command_buffer; pool_ = pool;
@@ -39,6 +39,7 @@ class NativeResolveDescriptorCache {
           const Descriptor descriptor = hot_[i].descriptor;
           Promote(i);
           ++statistics_.hits;
+          ++statistics_.hot_hits;
           return descriptor;
         }
       }
