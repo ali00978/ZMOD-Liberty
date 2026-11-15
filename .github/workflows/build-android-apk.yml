@@ -175,6 +175,7 @@ jobs:
           python tools/test_g925_fps_v233.py
           python tools/test_g925_sparse_upload_v234.py
           python tools/test_g925_role_aware_surface_v235.py
+          python tools/test_g925_indexed_batch_coverage_v236.py
           python tools/test_g925_present_overlap_v212.py
           python tools/test_g925_profile_report_v27.py
 
