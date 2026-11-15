@@ -10,12 +10,12 @@ root = Path(__file__).resolve().parents[1]
 sdk = root / "glue/rexglue-sdk-main"
 header = (sdk / "src/graphics/gta4_native/native_texture_upload_batch.h").read_text()
 for fragment in (
-    "std::array<Upload, kCapacity> uploads_{};",
+    "std::array<std::optional<Upload>, kCapacity> uploads_{};",
     "size_t count_ = 0;",
-    "uploads_[count_++] = std::move(upload);",
+    "uploads_[count_++].emplace(std::move(upload));",
     "const std::span<const VkImageMemoryBarrier> span(barriers.data(), count_);",
     "emit_barriers(VK_PIPELINE_STAGE_TRANSFER_BIT,",
-    "uploads_[i] = {};",
+    "uploads_[i].reset();",
 ):
     assert fragment in header, fragment
 assert "std::vector<Upload> uploads_" not in header
