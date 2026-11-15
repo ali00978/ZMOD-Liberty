@@ -34,10 +34,16 @@ compiler = os.environ.get("G925_TEST_CXX") or shutil.which("clang++") or shutil.
 if not compiler:
     raise SystemExit("C++20 compiler required")
 with tempfile.TemporaryDirectory(prefix="g925-native-upload-v2-") as temp:
+    # Only import Vulkan headers from the NDK, not its Android sysroot libc,
+    # which is incompatible with the Windows host's MSVC C++ toolchain.
+    host_headers = Path(temp) / "include"
+    for directory in ("vulkan", "vk_video"):
+        if (include / directory).is_dir():
+            shutil.copytree(include / directory, host_headers / directory)
     exe = Path(temp) / ("upload.exe" if os.name == "nt" else "upload")
     args = [
         compiler, "-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror",
-        "-I" + str(include), "-I" + str(sdk / "src"),
+        "-I" + str(host_headers), "-I" + str(sdk / "src"),
         str(root / "tools/test_g925_native_upload_v2.cpp"), "-o", str(exe),
     ]
     if os.environ.get("G925_TEST_SANITIZE") == "1":
