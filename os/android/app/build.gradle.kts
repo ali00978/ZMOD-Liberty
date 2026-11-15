@@ -26,6 +26,16 @@ val libertyGpu = (project.findProperty("libertyGpu") as String? ?: "adreno").low
 require(libertyGpu == "adreno" || libertyGpu == "mali") {
     "-PlibertyGpu must be 'adreno' or 'mali', got '$libertyGpu'"
 }
+// Dedicated independently installable package, never overwriting or reading
+// the classic app's sandbox. Reuse the verified Armv9 Mali native libraries.
+val libertyEdition = (project.findProperty("libertyEdition") as String? ?: "classic").lowercase()
+require(libertyEdition == "classic" || libertyEdition == "g925native") {
+    "-PlibertyEdition must be 'classic' or 'g925native'"
+}
+val g925NativeEdition = libertyEdition == "g925native"
+require(!g925NativeEdition || libertyGpu == "mali") {
+    "G925 Native requires the system Mali Vulkan build"
+}
 
 android {
     namespace   = "com.libertyrecomp"
@@ -49,7 +59,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.libertyrecomp"
+        applicationId = if (g925NativeEdition) "com.zmodliberty.g925native" else "com.libertyrecomp"
+        // Android launcher label is per package; the old installation keeps
+        // its exact package name, signing key and config untouched.
+        manifestPlaceholders["libertyAppLabel"] = if (g925NativeEdition)
+            "ZMOD Liberty G925 Native" else "Liberty Recompiled"
         // 28: ASharedMemory (26) for guest memory and AAudio (27) for audio.
         minSdk        = 29
         targetSdk     = 35
@@ -59,13 +73,15 @@ android {
         // Shown as e.g. 0.5.9.3-mali-alpha-1.5. The workflow reads both the
         // base version and versionSuffix to name the APK.
         val versionSuffix = "-alpha-2.36-g925-medium-batch-fps"
-        versionName   = "0.5.9.3" + (if (libertyGpu == "mali") "-mali" else "") + versionSuffix
+        versionName   = "0.5.9.3" + (if (libertyGpu == "mali") "-mali" else "") +
+            versionSuffix + if (g925NativeEdition) "-G925Native-v1" else ""
 
         // Read by DriverBridge.defaultMode(): the driver used when driver.txt
         // does not exist yet.
         buildConfigField("String", "DEFAULT_DRIVER",
             if (libertyGpu == "mali") "\"system\"" else "\"turnip\"")
         buildConfigField("String", "GPU_FAMILY", "\"$libertyGpu\"")
+        buildConfigField("boolean", "G925_NATIVE_EDITION", g925NativeEdition.toString())
 
         ndk {
             abiFilters += listOf("arm64-v8a")
