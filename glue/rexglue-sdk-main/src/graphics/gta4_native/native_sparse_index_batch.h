@@ -34,13 +34,18 @@ constexpr uint32_t NativeSparseTriangleIndexCount(
   return total;
 }
 
-// Short runs with identical immutable state may save driver/GPU work by
-// copying exact guest indices. A paired run has a tighter CPU-copy budget
-// than a three-draw run; longer proven runs retain the original policy.
-// The renderer still checks blending, stencil, queries, shader vertex IDs,
-// render targets, binding generations, and pipeline/constant identity.
-inline constexpr uint32_t kNativeSmallSparseBatchMaxIndices = 1024;
-inline constexpr uint32_t kNativePairedSparseBatchMaxIndices = 384;
+// Large CPU/GPU win opportunity: reduce *real Vulkan draw submissions*.
+// Lossless pair/triple batching previously allowed only 384 / 1024 indices,
+// rejecting medium-size meshes even with identical immutable render state.
+// Admit 4x / 3x larger candidates while bounding a merged upload to 6 / 12 KiB
+// for 32-bit indices (half for 16-bit). The already established larger-run
+// policy and its 65536-index hard cap are unchanged. Profile sparse-indexed-
+// draws-merged and GPU time before attributing a device-side FPS gain.
+// These are maximum *total* guest indices, not per-draw budgets.
+// Caller still checks blending, stencil, queries, shader vertex IDs, render
+// targets, binding generations, and pipeline/constant identity.
+inline constexpr uint32_t kNativeSmallSparseBatchMaxIndices = 3072;
+inline constexpr uint32_t kNativePairedSparseBatchMaxIndices = 1536;
 constexpr bool ShouldBatchNativeSparseIndexDraws(size_t draw_count, size_t adjacent_count,
                                                  uint32_t indices, bool has_gap) {
   return has_gap &&
