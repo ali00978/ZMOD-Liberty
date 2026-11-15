@@ -1,10 +1,10 @@
-# ZMOD Liberty G925 Native — standalone test build v2
+# ZMOD Liberty G925 Native — standalone FPS test build v3
 
 This is a **new Android app package**, not an update of the installed
 `com.libertyrecomp` application. Build branch:
 `feature/g925-native-standalone-app-v1`.
 
-| | Classic edition | G925 Native v2 |
+| | Classic edition | G925 Native v3 |
 |---|---|---|
 | Package ID | `com.libertyrecomp` | `com.zmodliberty.g925native` |
 | Launcher | Mali Edition | G925 Native |
@@ -22,7 +22,7 @@ Install it **beside** the previous app. The separate Android package needs
 the legitimate GTA IV game files installed again through its own installer.
 The existing app, files, settings and savegames are left alone.
 
-G925 Native v2 is the next stage of a dedicated G925 renderer. The build retains the tested native Vulkan engine and its exact rendering
+G925 Native v3 is the next stage of a dedicated G925 renderer. The build retains the tested native Vulkan engine and its exact rendering
 semantics, adds the isolated app identity and CPU scheduling profile, and now
 uses a fixed-capacity queue for up to 128 texture uploads. This removes
 per-frame vector growth while preserving both image layout barriers and every
@@ -74,7 +74,7 @@ before optimizing shaders and Vulkan render passes.
 ### G925 Native v2 test checklist
 
 1. Under the successful workflow's **Artifacts**, obtain
-   `ZMOD-Liberty-G925-Native-v2-armv9.apk` (not the Classic APK).
+   `ZMOD-Liberty-G925-Native-v3-armv9.apk` (not the Classic APK).
 2. Install alongside classic; load your own original GTA IV data in this
    app's **separate** data folder. Do not delete your old app.
 3. Keep graphics/resolution the same as in the other app. Confirm the menu,
@@ -86,3 +86,22 @@ The 2.37 native upgrade removes per-frame heap growth from the bounded
 texture upload batch. Compilation and host byte/order/barrier tests cannot
 prove game playability or measure device-side FPS; those remain real phone
 acceptance gates.
+
+### G925 Native v3: reduce CPU command overhead without quality loss
+
+This build is meant for **low FPS**, not startup or crash recovery.
+
+- Four-way exact Vulkan resolve descriptor MRU caches frequently alternating
+  post-processing targets; exact image lifetime, layout and pool reset checks
+  remain in place. An evicted backing descriptor is also evicted from MRU.
+- The background vertex-cache optimizer now rejects queue overflow **before**
+  copying potentially large guest index arrays. The source geometry and
+  graphics settings are untouched; an overflowing job uses the renderer's
+  existing original-order fallback.
+- No changes to resolution, draw distance, shadow quality, reflections, MSAA,
+  texture fidelity, GPU clock or system driver. Native FPS cannot be inferred
+  from host test success. Compare 2.37 and 2.38 with the same saved game,
+  graphics and scene to measure whether this work reduces CPU frame time.
+
+The native GPU remains an independent bottleneck; a verified APK does not
+guarantee 60 FPS on the Dimensity 9500s. 
