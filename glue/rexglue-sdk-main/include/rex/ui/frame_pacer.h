@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <utility>
 
 namespace rex::ui {
 
@@ -148,6 +149,30 @@ class FramePacer {
   bool phase_observed_ = false;
   bool display_driven_ = false;
   Attempt attempt_{};
+};
+
+// One producer owns this policy. Finish and submit the next writable mailbox
+// image while the previous publication is being presented, then drain that
+// publication BEFORE replacing the ready image. At most one publication is
+// pending; this does not change GPU completion or the presentation timeline.
+class FramePublicationPipeline {
+ public:
+  template <typename Wait>
+  void BeforePublish(bool on_ui_thread, Wait&& wait) {
+    const uint64_t prior = std::exchange(deferred_, 0);
+    // The UI must never wait for an acknowledgement delivered by itself.
+    if (prior && !on_ui_thread) wait(prior);
+  }
+  template <typename Wait>
+  void AfterPublish(uint64_t serial, bool should_wait, bool render_ahead,
+                    bool paired, Wait&& wait) {
+    if (!should_wait) return;
+    if (render_ahead && !paired) deferred_ = serial;
+    else wait(serial);
+  }
+
+ private:
+  uint64_t deferred_ = 0;
 };
 
 // Back-pressure, NOT another timer/cadence. Only the native render worker opts

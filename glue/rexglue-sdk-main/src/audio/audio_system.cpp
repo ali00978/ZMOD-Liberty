@@ -156,6 +156,8 @@ void AudioSystem::WorkerThreadMain() {
     if (handoff_wait_begin) handoff::Record("audio-wait", result.second, {handoff::Clock()-handoff_wait_begin, uint64_t(result.first)});
     if (result.first == rex::thread::WaitResult::kFailed) {
       REXAPU_WARN("AudioWorker: WaitAny failed");
+      // A broken wait must not spin a full CPU core.
+      rex::thread::Sleep(std::chrono::milliseconds(5));
       continue;
     }
 
@@ -164,6 +166,11 @@ void AudioSystem::WorkerThreadMain() {
         REXAPU_NOISY_DEBUG(
             "AudioWorker: WaitAny timed out (no semaphore signals)");
       }
+      // WaitAny already waited 500 ms. Previously we slept ANOTHER 500 ms
+      // below, missing the first freshly available audio credit when Android
+      // resumes playback after the notification shade. Immediately re-arm
+      // the semaphore wait instead; this is blocking, not busy-polling.
+      continue;
     }
 
     if (result.first == thread::WaitResult::kSuccess && result.second == kMaximumClientCount) {
@@ -234,8 +241,10 @@ void AudioSystem::WorkerThreadMain() {
     }
 
     if (!pumped) {
+      // Only unexpected non-success/non-timeout wait results reach here.
+      // Allow quick recovery without spinning.
       SCOPE_profile_cpu_i("apu", "Sleep");
-      rex::thread::Sleep(std::chrono::milliseconds(500));
+      rex::thread::Sleep(std::chrono::milliseconds(5));
     }
   }
   worker_running_ = false;
