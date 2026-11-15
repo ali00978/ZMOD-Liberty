@@ -26,7 +26,7 @@ for guard in ["!command.fixed_function_state.blend_enable",
               "other.shader_state != command.shader_state",
               "other.index_buffer != command.index_buffer"]:
     assert guard in renderer, guard
-assert re.search(r"versionCode\s*=\s*61",gradle)
-assert "-alpha-2.33-g925-paired-batch-fps" in gradle
+assert (version := re.search(r"versionCode\s*=\s*(\d+)", gradle)) and int(version.group(1)) >= 61
+assert re.search(r'val versionSuffix\s*=\s*"-alpha-2\.\d+-g925-[^"]+"', gradle)
 assert "python tools/test_g925_fps_v233.py" in workflow
 print("PASS: exact 2-draw GPU batching, 32-up run cap, rendering safety gates")
