@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -24,19 +25,26 @@ class NativeResolveDescriptorCache {
   void Reset() {
     // Cached descriptors belong to the command buffer's descriptor pool.
     // Invalidate the one-entry hot lookup on every pool/context transition.
-    entries_.clear(); hot_.valid = false; command_buffer_ = pool_ = 0;
+    entries_.clear(); 
+    for (auto& recent : hot_) recent.valid = false;
+    command_buffer_ = pool_ = 0;
   }
   Descriptor Find(const Key& key) {
     if (Valid(key)) {
-      // Resolve/blit workloads often reuse the previous exact descriptor.
-      // Bypass a 4-field unordered_map hash and bucket walk in that case.
-      if (hot_.valid && hot_.key == key) {
-        ++statistics_.hits;
-        return hot_.descriptor;
+      // Multiple postfx targets alternate during a single frame. The four
+      // exact recent descriptors bypass hashing and unordered_map traversal
+      // while preserving the command-buffer/pool lifetime checked on Reset.
+      for (size_t i = 0; i < hot_.size(); ++i) {
+        if (hot_[i].valid && hot_[i].key == key) {
+          const Descriptor descriptor = hot_[i].descriptor;
+          Promote(i);
+          ++statistics_.hits;
+          return descriptor;
+        }
       }
       const auto found = entries_.find(key);
       if (found != entries_.end()) {
-        hot_ = {key, found->second, true};
+        Remember(key, found->second);
         ++statistics_.hits;
         return found->second;
       }
@@ -50,7 +58,7 @@ class NativeResolveDescriptorCache {
     // checking for duplicates, causing a burst of redundant allocations.
     const auto existing = entries_.find(key);
     if (existing != entries_.end()) {
-      hot_ = {key, existing->second, true};
+      Remember(key, existing->second);
       return;
     }
     // Pre-size the per-command-pool map once; Reset()/clear() keeps the
@@ -59,10 +67,15 @@ class NativeResolveDescriptorCache {
     // A new descriptor only displaces ONE old entry, not the entire cache.
     // The unordered_map entry is deliberately an arbitrary victim: descriptor
     // validity is still controlled by the exact key and BeginScope/Reset.
-    if (entries_.size() >= kCapacity) entries_.erase(entries_.begin());
+    if (entries_.size() >= kCapacity) {
+      const auto victim = entries_.begin();
+      // Exact MRU entries must never outlive their backing pool-owned key.
+      Forget(victim->first);
+      entries_.erase(victim);
+    }
     if (entries_.emplace(key, descriptor).second) {
       ++statistics_.inserts;
-      hot_ = {key, descriptor, true};
+      Remember(key, descriptor);
     }
   }
   const Statistics& statistics() const { return statistics_; }
@@ -87,7 +100,29 @@ class NativeResolveDescriptorCache {
     bool valid = false;
   };
   // Recorder-local and non-owning; never allowed to outlive the pool scope.
-  HotEntry hot_{};
+  // Four entries cover common scene/depth/reflection/postfx alternation.
+  void Promote(size_t index) {
+    if (!index) return;
+    const HotEntry active = hot_[index];
+    for (; index > 0; --index) hot_[index] = hot_[index - 1];
+    hot_[0] = active;
+  }
+  void Remember(const Key& key, Descriptor descriptor) {
+    for (size_t i = 0; i < hot_.size(); ++i) {
+      if (hot_[i].valid && hot_[i].key == key) {
+        hot_[i].descriptor = descriptor;
+        Promote(i);
+        return;
+      }
+    }
+    for (size_t i = hot_.size() - 1; i > 0; --i) hot_[i] = hot_[i - 1];
+    hot_[0] = {key, descriptor, true};
+  }
+  void Forget(const Key& key) {
+    for (auto& recent : hot_)
+      if (recent.valid && recent.key == key) recent.valid = false;
+  }
+  std::array<HotEntry, 4> hot_{};
   std::unordered_map<Key, Descriptor, Hash> entries_;
   uint64_t command_buffer_ = 0, pool_ = 0;
   Statistics statistics_;
