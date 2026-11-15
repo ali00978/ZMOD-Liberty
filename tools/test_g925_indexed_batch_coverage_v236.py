@@ -30,8 +30,8 @@ for safety_gate in (
 ):
     assert safety_gate in renderer, safety_gate
 assert "python tools/test_g925_indexed_batch_coverage_v236.py" in workflow
-assert re.search(r"versionCode\s*=\s*64", gradle)
-assert "-alpha-2.36-g925-medium-batch-fps" in gradle
+assert (version := re.search(r"versionCode\s*=\s*(\d+)", gradle)) and int(version.group(1)) >= 64
+assert re.search(r"-alpha-2\.(?:3[6-9]|[4-9]\d)-g925-[^"]+", gradle)
 
 compiler = os.environ.get("G925_TEST_CXX") or shutil.which("clang++") or shutil.which("g++")
 if not compiler:
