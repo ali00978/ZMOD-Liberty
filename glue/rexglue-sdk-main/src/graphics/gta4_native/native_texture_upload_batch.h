@@ -3,6 +3,7 @@
 #include <array>
 #include <cassert>
 #include <cstddef>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -32,7 +33,7 @@ class NativeTextureUploadBatch {
   bool empty() const { return count_ == 0; }
   void Add(Upload upload) {
     assert(!full() && upload.image && upload.buffer && !upload.copies.empty());
-    uploads_[count_++] = std::move(upload);
+    uploads_[count_++].emplace(std::move(upload));
   }
 
   template <typename EmitBarriers, typename EmitCopy>
@@ -48,12 +49,12 @@ class NativeTextureUploadBatch {
       barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
       barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
       barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-      barrier.image = uploads_[i].image;
-      barrier.subresourceRange = uploads_[i].range;
+      barrier.image = uploads_[i]->image;
+      barrier.subresourceRange = uploads_[i]->range;
     }
     const std::span<const VkImageMemoryBarrier> span(barriers.data(), count_);
     emit_barriers(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, span);
-    for (size_t i = 0; i < count_; ++i) emit_copy(uploads_[i]);
+    for (size_t i = 0; i < count_; ++i) emit_copy(*uploads_[i]);
     for (size_t i = 0; i < count_; ++i) {
       auto& barrier = barriers[i];
       barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -66,12 +67,14 @@ class NativeTextureUploadBatch {
                   span);
     // Release source copy lists without discarding the fixed slot capacity.
     // Neither the batch nor these CPU vectors own Vulkan resources.
-    for (size_t i = 0; i < count_; ++i) uploads_[i] = {};
+    for (size_t i = 0; i < count_; ++i) uploads_[i].reset();
     count_ = 0;
   }
 
  private:
-  std::array<Upload, kCapacity> uploads_{};
+  // Disengaged slots construct no Upload vectors. Only active commands get
+  // materialized, avoiding 128 unused vector constructions per batch.
+  std::array<std::optional<Upload>, kCapacity> uploads_{};
   size_t count_ = 0;
 };
 
