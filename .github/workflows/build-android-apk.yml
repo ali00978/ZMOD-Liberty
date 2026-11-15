@@ -173,6 +173,7 @@ jobs:
           python tools/test_g925_gpu_clear_v231.py
           python tools/test_g925_playability_v232.py
           python tools/test_g925_fps_v233.py
+          python tools/test_g925_sparse_upload_v234.py
           python tools/test_g925_present_overlap_v212.py
           python tools/test_g925_profile_report_v27.py
 
