@@ -640,7 +640,7 @@ public class LauncherActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView edition = new TextView(this);
-        edition.setText("Mali Edition");
+        edition.setText(BuildConfig.G925_NATIVE_EDITION ? "G925 Native" : "Mali Edition");
         edition.setTextColor(0xF0FFFFFF);
         edition.setIncludeFontPadding(false);
         edition.setSingleLine(true);
