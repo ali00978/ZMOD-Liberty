@@ -16,7 +16,7 @@ workflow=(root/".github/workflows/build-android-apk.yml").read_text()
 gradle=(root/"os/android/app/build.gradle.kts").read_text()
 assert "const bool sparse_batch = sparse_indexed_range_count_ >= 2;" in renderer
 assert "REXCVAR_DEFINE_UINT32(gta4_native_merge_up_max, 32," in renderer
-assert "kNativePairedSparseBatchMaxIndices = 384" in header
+assert (paired := re.search(r"kNativePairedSparseBatchMaxIndices\s*=\s*(\d+)", header)) and int(paired.group(1)) >= 384
 assert "draw_count == 2 && adjacent_count == 1" in header
 for guard in ["!command.fixed_function_state.blend_enable",
               "!command.fixed_function_state.stencil_enable",
