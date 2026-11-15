@@ -166,6 +166,8 @@ public class LibertyActivity extends SDLActivity {
                 .append('\n');
         report.append("build: ").append(BuildConfig.GPU_FAMILY)
                 .append(" (default driver ").append(DriverBridge.defaultMode()).append(")\n");
+        report.append("edition: ").append(BuildConfig.G925_NATIVE_EDITION
+                ? "G925 Native v1 (separate Android package)" : "Classic").append('\n');
         report.append("driver.txt: ")
                 .append(mDriverText == null ? "(none)" : "\"" + mDriverText + "\"")
                 .append(" -> ").append(mDriverMode).append('\n');
@@ -318,6 +320,9 @@ public class LibertyActivity extends SDLActivity {
         }
         // "Play (Debug Log)" from the launcher: the runtime logs at info level
         // and the whole process log is recorded into files/debug_logs/.
+        // Edition-specific performance hints; user choices from files above
+        // remain authoritative. No resolution or game-quality changes.
+        G925NativeDefaults.apply(arguments, BuildConfig.G925_NATIVE_EDITION);
         applyPerformanceTestArguments(arguments);
         mDebugLog = getIntent() != null && getIntent().getBooleanExtra(EXTRA_DEBUG_LOG, false);
         if (mDebugLog) {
