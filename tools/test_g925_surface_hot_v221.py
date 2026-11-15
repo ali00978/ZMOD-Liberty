@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SDK = ROOT / "glue/rexglue-sdk-main"
 header = (SDK / "src/graphics/gta4_native/native_draw_lookup_cache.h").read_text()
 source = (SDK / "src/graphics/gta4_native/graphics_system.cpp").read_text()
-assert "hot_.size()" not in header  # fixed two-entry storage, no dynamic allocation
+assert "std::vector<Entry>" not in header  # fixed four-entry storage, no dynamic allocation
 assert "mutable std::array<Entry, 4> hot_{};" in header
 assert "hot.epoch == epoch_ && hot.image" in header
 assert "hot.registry_revision == registry_revision && hot.key == key" in header
