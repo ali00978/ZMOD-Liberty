@@ -11,11 +11,11 @@ using namespace rex::graphics::gta4_native;
 
 static_assert(ShouldBatchNativeSparseIndexDraws(2,1,384,true));
 static_assert(ShouldBatchNativeSparseIndexDraws(2,1,6,true));
-static_assert(!ShouldBatchNativeSparseIndexDraws(2,1,385,true));
+static_assert(!ShouldBatchNativeSparseIndexDraws(2,1,kNativePairedSparseBatchMaxIndices+1,true));
 static_assert(!ShouldBatchNativeSparseIndexDraws(2,1,384,false));
 static_assert(!ShouldBatchNativeSparseIndexDraws(2,2,384,true));
 static_assert(ShouldBatchNativeSparseIndexDraws(3,1,1024,true));
-static_assert(!ShouldBatchNativeSparseIndexDraws(3,1,1025,true));
+static_assert(!ShouldBatchNativeSparseIndexDraws(3,1,kNativeSmallSparseBatchMaxIndices+1,true));
 static_assert(ShouldBatchNativeSparseIndexDraws(4,2,4000,true));
 
 template <class Index> void VerifyPaired(uint32_t seed) {
