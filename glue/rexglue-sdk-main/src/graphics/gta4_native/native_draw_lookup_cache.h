@@ -30,12 +30,35 @@ template <typename Image, size_t Capacity = 64>
 class NativeSurfaceLookupCache {
  public:
   Image* Find(const NativeSurfaceLookupKey& key, uint64_t registry_revision) const {
+    // The last color and depth hit are independent. Alternating scene color
+    // and depth lookups can go straight to their exact recent slot, avoiding
+    // repeated full nine-word descriptor comparisons against the other role.
+    // This is only a hint: full identity, revision and epoch remain required.
+    const size_t role_slot = last_slot_for_role_[size_t(key.depth)];
+    if (role_slot < hot_.size()) {
+      const auto& candidate = hot_[role_slot];
+      if (candidate.epoch == epoch_ && candidate.image &&
+          candidate.registry_revision == registry_revision &&
+          candidate.key.descriptor[0] == key.descriptor[0] &&
+          candidate.key.samples == key.samples &&
+          candidate.key.depth == key.depth && candidate.key == key) {
+        // Preserve the original four-way LRU order; finding an integer slot
+        // in a four-element array is cheaper than comparing surface keys.
+        for (size_t position = 0; position < hot_order_.size(); ++position) {
+          if (hot_order_[position] == role_slot) {
+            if (position) PromoteHot(position);
+            return candidate.image;
+          }
+        }
+      }
+    }
     // Phone traces record around 6,800 successful surface lookups/frame.
     // Scene color, depth, reflection and presentation may cycle within a
     // single frame. Try four EXACT, recent identities before hashing the set
     // cache. Order uses lightweight indices: cached image entries never move.
     for (size_t probe = 0; probe < hot_order_.size(); ++probe) {
       const size_t slot = hot_order_[probe];
+      if (slot == role_slot) continue;  // Already checked this exact slot.
       const auto& hot = hot_[slot];
       // A color/depth switch usually changes the handle or role. Reject
       // that candidate before comparing its full nine-word descriptor.
@@ -45,7 +68,8 @@ class NativeSurfaceLookupCache {
           hot.key.depth != key.depth || hot.key.samples != key.samples) continue;
       if (hot.epoch == epoch_ && hot.image &&
           hot.registry_revision == registry_revision && hot.key == key) {
-        PromoteHot(probe);
+        last_slot_for_role_[size_t(key.depth)] = uint8_t(slot);
+        if (probe) PromoteHot(probe);
         return hot.image;
       }
     }
@@ -101,6 +125,7 @@ class NativeSurfaceLookupCache {
     // pointers; generation invalidation keeps the main array O(1).
     for (auto& hot : hot_) hot.image = nullptr;
     hot_order_ = {0, 1, 2, 3};
+    last_slot_for_role_ = {kNoHotSlot, kNoHotSlot};
     if (++epoch_ == 0) {
       for (auto& entry : entries_) entry = {};
       next_victim_.fill(0);
@@ -143,23 +168,36 @@ class NativeSurfaceLookupCache {
       const size_t slot = hot_order_[position];
       if (hot_[slot].image && hot_[slot].epoch == epoch_ && hot_[slot].key == key) {
         hot_[slot] = {key, revision, image, epoch_};
-        PromoteHot(position);
+        last_slot_for_role_[size_t(key.depth)] = uint8_t(slot);
+        if (position) PromoteHot(position);
         return;
       }
     }
     const size_t victim = hot_order_.back();
+    // Reused slots must not leave another role pointing at unrelated data.
+    const size_t previous_role = size_t(hot_[victim].key.depth);
+    if (last_slot_for_role_[previous_role] == victim)
+      last_slot_for_role_[previous_role] = kNoHotSlot;
     hot_[victim] = {key, revision, image, epoch_};
+    last_slot_for_role_[size_t(key.depth)] = uint8_t(victim);
     PromoteHot(hot_order_.size() - 1);
   }
   void Forget(const Entry& evicted) {
     if (evicted.epoch != epoch_ || !evicted.image) return;
-    for (auto& entry : hot_) {
-      if (entry.image && entry.epoch == epoch_ && entry.key == evicted.key)
+    for (size_t slot = 0; slot < hot_.size(); ++slot) {
+      auto& entry = hot_[slot];
+      if (entry.image && entry.epoch == epoch_ && entry.key == evicted.key) {
         entry.image = nullptr;
+        const size_t role = size_t(entry.key.depth);
+        if (last_slot_for_role_[role] == slot)
+          last_slot_for_role_[role] = kNoHotSlot;
+      }
     }
   }
+  static constexpr uint8_t kNoHotSlot = 4;
   mutable std::array<Entry, 4> hot_{};
   mutable std::array<size_t, 4> hot_order_{0, 1, 2, 3};
+  mutable std::array<uint8_t, 2> last_slot_for_role_{kNoHotSlot, kNoHotSlot};
   std::array<Entry, Capacity> entries_{};
   std::array<uint8_t, kSetCount> next_victim_{};
   uint64_t epoch_ = 1;
