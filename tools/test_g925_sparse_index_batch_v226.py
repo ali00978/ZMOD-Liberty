@@ -32,7 +32,7 @@ assert "water_query_index == UINT32_MAX" in source
 assert "RecordIndexedPrimitive(command_buffer, command, target.width," in source
 assert "host_index_count = total;" in source
 assert "host_start_index = 0;" in source
-assert "const bool sparse_batch = sparse_indexed_range_count_ >= 3;" in source
+assert "const bool sparse_batch = sparse_indexed_range_count_ >= 2;" in source
 assert "REXCVAR_GET(gta4_native_vertex_cache_order) && !sparse_batch" in source
 assert "kSparseIndexedDrawsMerged" in source and "kSparseIndexedDrawsMerged" in counter_h
 assert "sparse-indexed-draws-merged" in counter_cpp

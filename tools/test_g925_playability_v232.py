@@ -20,7 +20,7 @@ renderer=(sdk/"src/graphics/gta4_native/graphics_system.cpp").read_text()
 hook=(sdk/"gta4-recomp/src/android/android_frame_wait_hook.cpp").read_text()
 activity=(root/"os/android/app/src/main/java/com/libertyrecomp/LibertyActivity.java").read_text()
 launcher=(root/"os/android/app/src/main/java/com/libertyrecomp/LauncherActivity.java").read_text()
-assert "const bool sparse_batch = sparse_indexed_range_count_ >= 3;" in renderer
+assert "const bool sparse_batch = sparse_indexed_range_count_ >= 2;" in renderer
 assert "sparse_allowed && ShouldBatchNativeSparseIndexDraws(" in renderer
 assert "sparse_count, merged_count, sparse_indices, sparse_has_gap" in renderer
 assert "!command.fixed_function_state.blend_enable" in renderer

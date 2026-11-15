@@ -10,7 +10,8 @@ static_assert(ShouldBatchNativeSparseIndexDraws(3,1,1024,true));
 static_assert(!ShouldBatchNativeSparseIndexDraws(3,1,1025,true));
 static_assert(!ShouldBatchNativeSparseIndexDraws(3,2,400,true));
 static_assert(!ShouldBatchNativeSparseIndexDraws(3,1,400,false));
-static_assert(!ShouldBatchNativeSparseIndexDraws(2,1,400,true));
+static_assert(ShouldBatchNativeSparseIndexDraws(2,1,384,true));
+static_assert(!ShouldBatchNativeSparseIndexDraws(2,1,385,true));
 static_assert(ShouldBatchNativeSparseIndexDraws(4,2,4096,true));
 static_assert(!ShouldBatchNativeSparseIndexDraws(4,3,4096,true));
 int main() {

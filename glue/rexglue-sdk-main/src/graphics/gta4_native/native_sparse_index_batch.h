@@ -34,15 +34,21 @@ constexpr uint32_t NativeSparseTriangleIndexCount(
   return total;
 }
 
-// 3 tiny opaque identical draws can save two GPU commands with a bounded
-// <=1024-index upload. The caller still verifies all existing state/query gates.
+// Short runs with identical immutable state may save driver/GPU work by
+// copying exact guest indices. A paired run has a tighter CPU-copy budget
+// than a three-draw run; longer proven runs retain the original policy.
+// The renderer still checks blending, stencil, queries, shader vertex IDs,
+// render targets, binding generations, and pipeline/constant identity.
 inline constexpr uint32_t kNativeSmallSparseBatchMaxIndices = 1024;
+inline constexpr uint32_t kNativePairedSparseBatchMaxIndices = 384;
 constexpr bool ShouldBatchNativeSparseIndexDraws(size_t draw_count, size_t adjacent_count,
                                                  uint32_t indices, bool has_gap) {
   return has_gap &&
       ((draw_count >= 4 && draw_count >= adjacent_count + 2) ||
        (draw_count == 3 && adjacent_count == 1 &&
-        indices <= kNativeSmallSparseBatchMaxIndices));
+        indices <= kNativeSmallSparseBatchMaxIndices) ||
+       (draw_count == 2 && adjacent_count == 1 &&
+        indices <= kNativePairedSparseBatchMaxIndices));
 }
 constexpr bool NativeSparseTriangleBatchHasGap(
     std::span<const NativeSparseIndexRange> ranges) {
