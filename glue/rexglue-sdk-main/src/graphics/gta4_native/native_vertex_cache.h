@@ -196,6 +196,12 @@ class NativeVertexCacheOptimizer {
   // Copies the indices; false (nothing queued) when the queue is full.
   bool Enqueue(std::shared_ptr<NativeVertexCacheRange> range, const void* indices,
                uint32_t index_count, bool index32) {
+    // Streaming geometry can saturate the bounded background optimizer on
+    // phone CPUs. Previously we allocated and copied the ENTIRE index range
+    // before discovering that all 512 queue slots were occupied. Backpressure
+    // must be tested before reading guest indices or allocating CPU memory.
+    // This is a performance hint: the locked check below remains authoritative.
+    if (queued_count_.load(std::memory_order_acquire) >= kMaxPending) return false;
     Job job{std::move(range), {}, index_count, index32};
     job.source.resize(size_t(index_count) * (index32 ? 4 : 2));
     std::memcpy(job.source.data(), indices, job.source.size());
@@ -203,6 +209,7 @@ class NativeVertexCacheOptimizer {
       std::lock_guard lock(mutex_);
       if (jobs_.size() >= kMaxPending) return false;
       jobs_.push_back(std::move(job));
+      queued_count_.store(jobs_.size(), std::memory_order_release);
     }
     condition_.notify_one();
     return true;
@@ -227,6 +234,7 @@ class NativeVertexCacheOptimizer {
         condition_.wait(lock, [this] { return !jobs_.empty(); });
         job = std::move(jobs_.front());
         jobs_.pop_front();
+        queued_count_.store(jobs_.size(), std::memory_order_release);
       }
       job.range->indices.resize(job.source.size());
       const uint32_t triangles = job.index_count / 3;
@@ -247,6 +255,9 @@ class NativeVertexCacheOptimizer {
   std::mutex mutex_;
   std::condition_variable condition_;
   std::deque<Job> jobs_;
+  // Published under the queue mutex. The game's producer can avoid a
+  // potentially expensive memcpy when the worker has fallen behind.
+  std::atomic<size_t> queued_count_{0};
 };
 
 // Post-transform cache misses for a FIFO cache of `cache_size` (diagnostics).
