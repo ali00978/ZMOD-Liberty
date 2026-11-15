@@ -7,11 +7,11 @@
 #include "../glue/rexglue-sdk-main/src/graphics/gta4_native/native_sparse_index_batch.h"
 using namespace rex::graphics::gta4_native;
 static_assert(ShouldBatchNativeSparseIndexDraws(3,1,1024,true));
-static_assert(!ShouldBatchNativeSparseIndexDraws(3,1,1025,true));
+static_assert(!ShouldBatchNativeSparseIndexDraws(3,1,kNativeSmallSparseBatchMaxIndices+1,true));
 static_assert(!ShouldBatchNativeSparseIndexDraws(3,2,400,true));
 static_assert(!ShouldBatchNativeSparseIndexDraws(3,1,400,false));
 static_assert(ShouldBatchNativeSparseIndexDraws(2,1,384,true));
-static_assert(!ShouldBatchNativeSparseIndexDraws(2,1,385,true));
+static_assert(!ShouldBatchNativeSparseIndexDraws(2,1,kNativePairedSparseBatchMaxIndices+1,true));
 static_assert(ShouldBatchNativeSparseIndexDraws(4,2,4096,true));
 static_assert(!ShouldBatchNativeSparseIndexDraws(4,3,4096,true));
 int main() {
