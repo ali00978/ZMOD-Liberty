@@ -308,6 +308,31 @@ jobs:
           path: ${{ env.APK_NAME }}
           if-no-files-found: error
           retention-days: 30
+      # Same verified Armv9/Mali engine, but a distinct application ID and
+      # sandbox: users can install the G925 Native prototype beside classic.
+      - name: Test standalone G925 Native package and startup defaults
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        run: python tools/test_g925_native_app_v1.py
+
+      - name: Package independent G925 Native APK
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        run: |
+          export ANDROID_HOME="$(cygpath -u "$ANDROID_HOME")"
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          LIBERTY_EDITION=g925native bash os/android/scripts/build_apk.sh debug
+          APK="os/android/app/build/outputs/apk/debug/app-debug.apk"
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt.exe"
+          "$AAPT" dump badging "$APK" | grep -F "package: name='com.zmodliberty.g925native'"
+          cp "$APK" ZMOD-Liberty-G925-Native-v1-armv9.apk
+
+      - name: Upload independent G925 Native APK
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZMOD-Liberty-G925-Native-v1-armv9.apk
+          path: ZMOD-Liberty-G925-Native-v1-armv9.apk
+          if-no-files-found: error
+          retention-days: 30
 
   fast-apk:
     needs: plan
@@ -416,5 +441,30 @@ jobs:
         with:
           name: ${{ env.APK_NAME }}
           path: ${{ env.APK_NAME }}
+          if-no-files-found: error
+          retention-days: 30
+      # Same verified Armv9/Mali engine, but a distinct application ID and
+      # sandbox: users can install the G925 Native prototype beside classic.
+      - name: Test standalone G925 Native package and startup defaults
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        run: python tools/test_g925_native_app_v1.py
+
+      - name: Package independent G925 Native APK
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        run: |
+          export ANDROID_HOME="$(cygpath -u "$ANDROID_HOME")"
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          LIBERTY_EDITION=g925native bash os/android/scripts/build_apk.sh debug
+          APK="os/android/app/build/outputs/apk/debug/app-debug.apk"
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt.exe"
+          "$AAPT" dump badging "$APK" | grep -F "package: name='com.zmodliberty.g925native'"
+          cp "$APK" ZMOD-Liberty-G925-Native-v1-armv9.apk
+
+      - name: Upload independent G925 Native APK
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZMOD-Liberty-G925-Native-v1-armv9.apk
+          path: ZMOD-Liberty-G925-Native-v1-armv9.apk
           if-no-files-found: error
           retention-days: 30
