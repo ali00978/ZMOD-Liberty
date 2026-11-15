@@ -71,13 +71,30 @@ inline bool WriteNativeSparseTriangleIndices(
   const uint32_t count = NativeSparseTriangleIndexCount(ranges, source.size() / element);
   if (!count || destination.size() < size_t(count) * element)
     return false;
+  // Exact consecutive guest ranges form one byte-contiguous source span.
+  // Copy each maximal adjacent run once instead of issuing a memcpy per draw.
+  // Out-of-order, overlapping, repeated or genuinely sparse ranges still
+  // preserve their original input ordering and exact source bytes.
   size_t output_offset = 0;
-  for (const auto& range : ranges) {
-    const size_t bytes = size_t(range.count) * element;
+  size_t run_first = ranges.front().first;
+  size_t run_count = ranges.front().count;
+  const auto flush_run = [&] {
+    const size_t bytes = run_count * element;
     std::memcpy(destination.data() + output_offset,
-                source.data() + size_t(range.first) * element, bytes);
+                source.data() + run_first * element, bytes);
     output_offset += bytes;
+  };
+  for (size_t i = 1; i < ranges.size(); ++i) {
+    const auto& range = ranges[i];
+    if (uint64_t(run_first) + run_count == range.first) {
+      run_count += range.count;
+    } else {
+      flush_run();
+      run_first = range.first;
+      run_count = range.count;
+    }
   }
+  flush_run();
   return output_offset == size_t(count) * element;
 }
 
