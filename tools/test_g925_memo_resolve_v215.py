@@ -13,7 +13,7 @@ vertex = (sdk / "src/graphics/gta4_native/native_draw_lookup_cache.h").read_text
 resolve = (sdk / "src/graphics/gta4_native/native_resolve_descriptor_cache.h").read_text()
 assert "std::array<Entry, kSlots> entries_" in exact
 assert "mutable std::array<size_t, kSlots> order_" in vertex
-assert "entries_.erase(entries_.begin())" in resolve
+assert "Forget(victim->first);" in resolve and "entries_.erase(victim);" in resolve
 assert "entries_.reserve(kCapacity)" in resolve
 assert "entries_.size() >= kCapacity) entries_.clear()" not in resolve
 
