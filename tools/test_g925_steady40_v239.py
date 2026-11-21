@@ -52,12 +52,13 @@ required = {
 pairs = dict(re.findall(r'\{"([^"]+)", "([^"]+)"\}', profile))
 assert pairs == required, (pairs, required)
 for key, value in required.items():
-    # Only use cvars and option values actually exposed by the launcher.
-    matches = re.findall(
-        r'new GraphicsSetting\(.*?new String\[\] \{[^}]*"' + re.escape(key) +
-        r'"[^}]*\}.*?new String\[\] \{([^}]*)\}\s*\)',
-        graphics, flags=re.S)
-    assert matches, key
+    # Validate the final values array (not the human-readable choice labels).
+    matches = []
+    for entry in graphics.split("new GraphicsSetting(")[1:]:
+        arrays = re.findall(r'new String\[\]\s*\{([^}]*)\}', entry.split("),", 1)[0])
+        if len(arrays) == 3 and f'"{key}"' in arrays[0]:
+            matches.append(arrays[-1])
+    assert len(matches) == 1, (key, matches)
     assert f'"{value}"' in matches[0], (key, value, matches[0])
 
 assert "G925CanQueueVertexOptimization" in cache
