@@ -49,13 +49,13 @@ required = {
     "gta4_fps_guard": "2",
     "android_thermal_guard": "true",
 }
-pairs = dict(re.findall(r'\\{"([^"]+)", "([^"]+)"\\}', profile))
+pairs = dict(re.findall(r'\{"([^"]+)", "([^"]+)"\}', profile))
 assert pairs == required, (pairs, required)
 for key, value in required.items():
     # Only use cvars and option values actually exposed by the launcher.
     matches = re.findall(
-        r'new GraphicsSetting\\(.*?new String\\[\\] \\{[^}]*"' + re.escape(key) +
-        r'"[^}]*\\}.*?new String\\[\\] \\{([^}]*)\\}\\s*\\)',
+        r'new GraphicsSetting\(.*?new String\[\] \{[^}]*"' + re.escape(key) +
+        r'"[^}]*\}.*?new String\[\] \{([^}]*)\}\s*\)',
         graphics, flags=re.S)
     assert matches, key
     assert f'"{value}"' in matches[0], (key, value, matches[0])
