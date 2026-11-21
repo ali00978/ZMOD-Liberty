@@ -19,12 +19,17 @@ for required in (
 ):
     assert required in resolve, required
 for required in (
-    "queued_count_.load(std::memory_order_acquire) >= kMaxPending",
+    "G925CanQueueVertexOptimization(",
+    "queued_count_.load(std::memory_order_acquire)",
     "queued_count_.store(jobs_.size(), std::memory_order_release);",
     "std::atomic<size_t> queued_count_{0};",
+    "queued_bytes_.fetch_add(bytes, std::memory_order_release)",
+    "queued_bytes_.fetch_sub(job.source.size(), std::memory_order_release)",
 ):
     assert required in vertex, required
+# The 2.39 combined job-count/byte-count fast guard must run before copying.
 assert vertex.index("queued_count_.load(std::memory_order_acquire)") < vertex.index("job.source.resize(")
+assert vertex.index("queued_bytes_.load(std::memory_order_acquire)") < vertex.index("job.source.resize(")
 assert "python tools/test_g925_fps_cache_v238.py" in workflow
 compiler = os.environ.get("G925_TEST_CXX") or shutil.which("clang++") or shutil.which("g++")
 if not compiler:
