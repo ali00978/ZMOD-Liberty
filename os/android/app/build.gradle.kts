@@ -69,10 +69,10 @@ android {
         targetSdk     = 35
         // Higher than every earlier build (upstream 0.5.9.3 and Mali alpha 1.4 are 18),
         // so it installs as an update over either.
-        versionCode   = 66
+        versionCode   = 67
         // Shown as e.g. 0.5.9.3-mali-alpha-1.5. The workflow reads both the
         // base version and versionSuffix to name the APK.
-        val versionSuffix = "-alpha-2.38-g925-cpu-fps-fastpaths"
+        val versionSuffix = "-alpha-2.39-g925-steady40"
         versionName   = "0.5.9.3" + (if (libertyGpu == "mali") "-mali" else "") +
             versionSuffix + (if (g925NativeEdition) "-G925Native-v3" else "")
 
