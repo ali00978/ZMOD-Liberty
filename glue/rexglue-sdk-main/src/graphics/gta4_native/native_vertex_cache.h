@@ -20,6 +20,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "g925_vertex_job_budget.h"
+
 namespace rex::graphics::gta4_native {
 
 namespace vertex_cache_detail {
@@ -201,14 +203,24 @@ class NativeVertexCacheOptimizer {
     // before discovering that all 512 queue slots were occupied. Backpressure
     // must be tested before reading guest indices or allocating CPU memory.
     // This is a performance hint: the locked check below remains authoritative.
-    if (queued_count_.load(std::memory_order_acquire) >= kMaxPending) return false;
+    const size_t bytes = size_t(index_count) * (index32 ? 4u : 2u);
+    // Bound queued source copies as well as job count. Without this budget a
+    // transient traffic/geometry burst can hold many megabytes of redundant
+    // guest index copies while the worker is still processing earlier meshes.
+    // Rejection is safe: the caller uses its existing original-order draw.
+    if (!G925CanQueueVertexOptimization(
+            queued_count_.load(std::memory_order_acquire),
+            queued_bytes_.load(std::memory_order_acquire), bytes)) return false;
     Job job{std::move(range), {}, index_count, index32};
-    job.source.resize(size_t(index_count) * (index32 ? 4 : 2));
-    std::memcpy(job.source.data(), indices, job.source.size());
+    job.source.resize(bytes);
+    std::memcpy(job.source.data(), indices, bytes);
     {
       std::lock_guard lock(mutex_);
-      if (jobs_.size() >= kMaxPending) return false;
+      if (!G925CanQueueVertexOptimization(jobs_.size(),
+                                          queued_bytes_.load(std::memory_order_relaxed),
+                                          bytes)) return false;
       jobs_.push_back(std::move(job));
+      queued_bytes_.fetch_add(bytes, std::memory_order_release);
       queued_count_.store(jobs_.size(), std::memory_order_release);
     }
     condition_.notify_one();
@@ -216,7 +228,7 @@ class NativeVertexCacheOptimizer {
   }
 
  private:
-  static constexpr size_t kMaxPending = 512;
+  static constexpr size_t kMaxPending = kG925MaxVertexOptimizationJobs;
   struct Job {
     std::shared_ptr<NativeVertexCacheRange> range;
     std::vector<uint8_t> source;
@@ -234,6 +246,7 @@ class NativeVertexCacheOptimizer {
         condition_.wait(lock, [this] { return !jobs_.empty(); });
         job = std::move(jobs_.front());
         jobs_.pop_front();
+        queued_bytes_.fetch_sub(job.source.size(), std::memory_order_release);
         queued_count_.store(jobs_.size(), std::memory_order_release);
       }
       job.range->indices.resize(job.source.size());
@@ -258,6 +271,7 @@ class NativeVertexCacheOptimizer {
   // Published under the queue mutex. The game's producer can avoid a
   // potentially expensive memcpy when the worker has fallen behind.
   std::atomic<size_t> queued_count_{0};
+  std::atomic<size_t> queued_bytes_{0};
 };
 
 // Post-transform cache misses for a FIFO cache of `cache_size` (diagnostics).
