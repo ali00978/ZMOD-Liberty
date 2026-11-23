@@ -860,6 +860,77 @@ public class LauncherActivity extends Activity {
         toast("Original engine/config restored; backup in g925-official-backups.");
     }
 
+    /**
+     * Opt-in performance-first experiment. Measurably lowers the game-side
+     * traffic/draw-distance workload and GPU pixel count, but 60 is a cap,
+     * NOT a guaranteed FPS result. No system driver or save data changes.
+     */
+    private void applyG925MaxFpsProfile() {
+        if (!BuildConfig.G925_NATIVE_EDITION) return;
+        final String[][] selected = {
+                {"gta4_output_height_cap", "540"},
+                {"gta4_native_upscaler", "native"},
+                {"gta4_native_anti_aliasing", "off"},
+                {"gta4_frame_limit", "60"},
+                {"gta4_draw_distance_scale", "0.6"},
+                {"gta4_traffic_density_scale", "0.2"},
+                {"gta4_shadow_map_base_size", "256"},
+                {"gta4_reflection_aa", "off"},
+                {"gta4_extra_frames_in_flight", "1"},
+                {"android_performance_hint_target_ms", "16"},
+                {"android_performance_hint_report_interval_ms", "16"},
+                {"android_performance_hint_stable_threads", "true"},
+                {"android_performance_hint", "true"},
+                {"gta4_dynamic_draw_distance", "true"},
+                {"gta4_fps_guard", "2"},
+                {"android_thermal_guard", "true"}
+        };
+        // Validate every value before mutating any dropdown. Never save a
+        // half-applied profile when a future UI revision removes a choice.
+        int[] positions = new int[selected.length];
+        for (int entry = 0; entry < selected.length; ++entry) {
+            int match = -1;
+            for (int index = 0; index < GRAPHICS_SETTINGS.length; ++index) {
+                GraphicsSetting setting = GRAPHICS_SETTINGS[index];
+                if (!setting.cvars[0].equals(selected[entry][0])) continue;
+                if (mGraphicsSpinners[index] == null) break;
+                for (int value = 0; value < setting.values.length; ++value) {
+                    if (setting.values[value].equals(selected[entry][1])) {
+                        match = index * 100 + value + 1;
+                        break;
+                    }
+                }
+                break;
+            }
+            if (match < 0) {
+                toast("Max FPS settings unavailable; nothing saved");
+                return;
+            }
+            positions[entry] = match;
+        }
+        // Preserve the user's prior settings exactly once, before any save.
+        File existing = new File(mDataRoot, LibertyActivity.GRAPHICS_FILE);
+        File recovery = new File(mDataRoot, "graphics-before-g925-maxfps.txt");
+        if (existing.isFile() && !recovery.exists()) {
+            try {
+                Files.copy(existing.toPath(), recovery.toPath());
+            } catch (IOException e) {
+                Log.w(TAG, "Could not back up previous Max FPS graphics settings", e);
+                toast("Could not back up graphics settings; profile not applied");
+                return;
+            }
+        }
+        for (int encoded : positions) {
+            int index = encoded / 100;
+            int choice = encoded % 100;
+            mGraphicsSpinners[index].setSelection(choice, false);
+            mGraphicsPositions[index] = choice;
+        }
+        markSettingsChanged();
+        saveSettings(false);
+        toast("Max FPS profile saved. Lower visual quality; 60 is only the FPS cap.");
+    }
+
     /** Opt-in 40 FPS baseline: 25ms frame budget, not a promised frame rate.
      *  Keep the proven native renderer and system Mali driver; only use
      *  existing cvars. Other launcher selections remain unchanged.
