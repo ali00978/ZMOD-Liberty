@@ -24,7 +24,7 @@ on:
   # Build a child branch against the verified 2.6 base so GitHub permits
   # restoring that base branch's compiler cache (sibling push builds cannot).
   pull_request:
-    branches: [feature/g925-stable-16ms-v26]
+    branches: [feature/g925-stable-16ms-v26, feature/g925-v239-steady40-native]
     types: [opened, synchronize, reopened]
     paths-ignore:
       - '**.md'
