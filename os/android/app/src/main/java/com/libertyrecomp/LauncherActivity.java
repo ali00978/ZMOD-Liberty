@@ -49,6 +49,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -860,68 +861,132 @@ public class LauncherActivity extends Activity {
         toast("Original engine/config restored; backup in g925-official-backups.");
     }
 
-    /** Opt-in 40 FPS baseline: 25ms frame budget, not a promised frame rate.
-     *  Keep the proven native renderer and system Mali driver; only use
-     *  existing cvars. Other launcher selections remain unchanged.
+    /**
+     * Performance scheduling only: keep the player's existing resolution,
+     * draw distance, population, shadows, reflections, textures, upscaler
+     * and every other visual setting exactly as selected.
+     * A 60 FPS limit is not a promise of 60 rendered frames per second.
      */
-    private void applyG925Steady40Profile() {
+    private void applyG925FullQualityPerformanceProfile() {
         if (!BuildConfig.G925_NATIVE_EDITION) return;
         final String[][] selected = {
-                {"gta4_output_height_cap", "720"},
-                {"gta4_native_upscaler", "native"},
-                {"gta4_native_anti_aliasing", "off"},
-                {"gta4_frame_limit", "40"},
-                {"gta4_draw_distance_scale", "0.8"},
-                {"gta4_traffic_density_scale", "0.3"},
-                {"gta4_shadow_map_base_size", "256"},
-                {"gta4_reflection_aa", "off"},
-                {"gta4_extra_frames_in_flight", "2"},
+                {"gta4_frame_limit", "60"},
+                {"gta4_extra_frames_in_flight", "1"},
                 {"android_performance_hint_target_ms", "16"},
                 {"android_performance_hint_report_interval_ms", "16"},
                 {"android_performance_hint_stable_threads", "true"},
-                {"android_performance_hint", "true"},
-                {"gta4_dynamic_draw_distance", "true"},
-                {"gta4_fps_guard", "2"},
-                {"android_thermal_guard", "true"}
+                {"android_performance_hint", "true"}
         };
-        // The launcher's selections are the single source of truth; avoid
-        // writing duplicate CLI flags or silently resetting unrelated settings.
-        int applied = 0;
-        for (String[] item : selected) {
+        int[] settingIndices = new int[selected.length];
+        int[] selectedChoices = new int[selected.length];
+        // Prevalidate all values so a missing menu choice can never leave
+        // a half-applied configuration or change image quality accidentally.
+        for (int entry = 0; entry < selected.length; ++entry) {
+            int matchedSetting = -1;
+            int matchedChoice = -1;
             for (int index = 0; index < GRAPHICS_SETTINGS.length; ++index) {
                 GraphicsSetting setting = GRAPHICS_SETTINGS[index];
-                if (!setting.cvars[0].equals(item[0])) continue;
-                for (int value = 0; value < setting.values.length; ++value) {
-                    if (!setting.values[value].equals(item[1])) continue;
-                    if (mGraphicsSpinners[index] == null) continue;
-                    mGraphicsSpinners[index].setSelection(value + 1, false);
-                    mGraphicsPositions[index] = value + 1;
-                    ++applied;
-                    break;
+                if (!setting.cvars[0].equals(selected[entry][0])) continue;
+                if (mGraphicsSpinners[index] == null) break;
+                for (int choice = 0; choice < setting.values.length; ++choice) {
+                    if (setting.values[choice].equals(selected[entry][1])) {
+                        matchedSetting = index;
+                        matchedChoice = choice + 1;
+                        break;
+                    }
                 }
                 break;
             }
-        }
-        if (applied != selected.length) {
-            toast("40 FPS profile incomplete: settings not saved");
-            return;
-        }
-        markSettingsChanged();
-        // Existing graphics.txt is kept as a recovery copy the first time
-        // the boost profile is selected. Saves/game data are never touched.
-        File existing = new File(mDataRoot, LibertyActivity.GRAPHICS_FILE);
-        File recovery = new File(mDataRoot, "graphics-before-g925-40fps.txt");
-        if (existing.isFile() && !recovery.exists()) {
-            try {
-                Files.copy(existing.toPath(), recovery.toPath());
-            } catch (IOException e) {
-                Log.w(TAG, "Could not back up previous graphics profile", e);
-                toast("Could not back up existing graphics settings; save manually");
+            if (matchedSetting < 0) {
+                toast("Full-quality FPS boost unavailable; no settings saved");
                 return;
             }
+            settingIndices[entry] = matchedSetting;
+            selectedChoices[entry] = matchedChoice;
         }
-        saveSettings(false);
-        toast("G925 40 FPS profile saved. Restart game; compare FPS and p95.");
+        // The normal Save action rebuilds graphics.txt from known dropdowns,
+        // which can erase advanced user-supplied visual cvars. For this
+        // fidelity-only action, merge the six CPU/scheduling overrides with
+        // every original line byte-for-byte aside from line endings.
+        if (mSettingsDirty) {
+            toast("Save your other changes first, then apply full-quality FPS boost");
+            return;
+        }
+        File graphics = new File(mDataRoot, LibertyActivity.GRAPHICS_FILE);
+        File backup = new File(mDataRoot, "graphics-before-g925-full-quality.txt");
+        try {
+            java.util.List<String> original = graphics.isFile()
+                    ? Files.readAllLines(graphics.toPath(), StandardCharsets.UTF_8)
+                    : java.util.Collections.emptyList();
+            String merged = G925FullQualityCvarMerge.merge(original, selected);
+            if (graphics.isFile() && !backup.exists())
+                Files.copy(graphics.toPath(), backup.toPath());
+            writeCleanConfig(graphics, merged.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            Log.w(TAG, "Could not save full-quality scheduling settings", e);
+            toast("FPS boost not saved; original settings kept");
+            return;
+        }
+        for (int entry = 0; entry < selected.length; ++entry) {
+            int index = settingIndices[entry];
+            int choice = selectedChoices[entry];
+            mGraphicsSpinners[index].setSelection(choice, false);
+            mGraphicsPositions[index] = choice;
+        }
+        updateSaveStatus();
+        toast("FPS scheduling saved. Every visual graphics option preserved.");
+    }
+
+    /**
+     * Explicit recovery for people who used the old 2.39/2.41 reduced-
+     * quality profiles. Prefer the earliest backup (before 40 FPS profile),
+     * otherwise the backup made before Max FPS. Never restore automatically
+     * or overwrite user choices without pressing the recovery button.
+     */
+    private void restoreG925GraphicsBackup() {
+        if (!BuildConfig.G925_NATIVE_EDITION) return;
+        File before40 = new File(mDataRoot, "graphics-before-g925-40fps.txt");
+        File beforeMax = new File(mDataRoot, "graphics-before-g925-maxfps.txt");
+        File previous = before40.isFile() ? before40 : beforeMax;
+        if (!previous.isFile()) {
+            toast("No previous quality profile backup was found");
+            return;
+        }
+        File current = new File(mDataRoot, LibertyActivity.GRAPHICS_FILE);
+        File undo = new File(mDataRoot, "graphics-before-quality-restore.txt");
+        try {
+            if (current.isFile() && !undo.exists())
+                Files.copy(current.toPath(), undo.toPath());
+            Files.copy(previous.toPath(), current.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            Log.w(TAG, "Restoring original G925 graphics profile failed", e);
+            toast("Could not restore original graphics settings");
+            return;
+        }
+        java.util.Map<String, String> restored = readGraphicsSettings();
+        mGraphicsLoading = true;
+        try {
+            for (int index = 0; index < GRAPHICS_SETTINGS.length; ++index) {
+                GraphicsSetting setting = GRAPHICS_SETTINGS[index];
+                int selection = 0;
+                String value = restored.get(setting.cvars[0]);
+                for (int choice = 0; choice < setting.values.length; ++choice) {
+                    if (setting.values[choice].equals(value)) {
+                        selection = choice + 1;
+                        break;
+                    }
+                }
+                if (mGraphicsSpinners[index] == null) continue;
+                mGraphicsSpinners[index].setSelection(selection, false);
+                mGraphicsPositions[index] = selection;
+            }
+        } finally {
+            mGraphicsLoading = false;
+        }
+        mSettingsDirty = false;
+        updateSaveStatus();
+        toast("Previous graphics restored. Restart GTA IV to apply.");
     }
 
     // Graphics settings: one dropdown per setting, saved to graphics.txt, which
@@ -1166,16 +1231,21 @@ public class LauncherActivity extends Activity {
         card.addView(official40, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
 
-        // Explicit, reversible option for players prioritising playable 40 FPS.
-        // Classic stays untouched. This changes only launcher-owned cvars.
         if (BuildConfig.G925_NATIVE_EDITION) {
-            Button steady40 = button("G925 NATIVE / 40 FPS PERFORMANCE", true);
-            steady40.setOnClickListener(v -> applyG925Steady40Profile());
-            card.addView(steady40, new LinearLayout.LayoutParams(
+            Button fullQuality = button("G925 NATIVE / FPS BOOST (SAME GRAPHICS)", true);
+            fullQuality.setOnClickListener(v -> applyG925FullQualityPerformanceProfile());
+            card.addView(fullQuality, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
-            card.addView(text("One-tap 720p/40 FPS CPU+GPU profile. Reduces draw distance, "
-                    + "population and reflection AA. Saves settings; launch the game to test. "
-                    + "Existing game files, saves and drivers are never changed.",
+            card.addView(text("Keeps your resolution, population, draw distance, shadows, "
+                    + "reflections, texture quality and effects unchanged. Sets a 60 FPS "
+                    + "limit and 16ms Android CPU hints only. Actual FPS is not guaranteed.",
+                    12, R.color.picker_muted), matchWrap(dp(8)));
+            Button restoreQuality = button("RESTORE PREVIOUS GRAPHICS BACKUP", false);
+            restoreQuality.setOnClickListener(v -> restoreG925GraphicsBackup());
+            card.addView(restoreQuality, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+            card.addView(text("Only needed if you previously used a reduced-quality "
+                    + "G925 preset; restores your original graphics.txt when a backup exists.",
                     12, R.color.picker_muted), matchWrap(dp(8)));
         }
         Button official60 = button("ORIGINAL GRAPHICS / 60 FPS CAP", false);

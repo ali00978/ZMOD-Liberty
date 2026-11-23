@@ -27,7 +27,7 @@ assert re.search(r"ShouldVerifyRecordedFixedState\([\s\S]*?command_index\) &&\s*
 gradle = (root / "os/android/app/build.gradle.kts").read_text()
 version = re.search(r"versionCode\s*=\s*(\d+)", gradle)
 assert version and int(version.group(1)) >= 57
-assert re.search(r"-alpha-2\.(?:29|3\d)-g925-", gradle)
+assert re.search(r"-alpha-2\.(?:29|[3-9]\d)-g925-", gradle)
 workflow = (root / ".github/workflows/build-android-apk.yml").read_text()
 assert "python tools/test_g925_fixed_state_validation_v229.py" in workflow
 print("PASS: sampled hash check preserves actual render state, full debug validation and v2.29 integration")
