@@ -27,8 +27,10 @@ if not compiler:
 with tempfile.TemporaryDirectory(prefix="g925-vertex-v240-") as temp:
     binary = Path(temp) / ("vertex.exe" if os.name == "nt" else "vertex")
     command = [compiler, "-std=c++20", "-O2", "-Wall", "-Wextra", "-Werror",
-               "-pthread", str(root / "tools/test_g925_vertex_work_v240.cpp"),
+               str(root / "tools/test_g925_vertex_work_v240.cpp"),
                "-o", str(binary)]
+    if os.name != "nt":
+        command.insert(-2, "-pthread")
     if os.environ.get("G925_TEST_SANITIZE") == "1":
         command[2:2] = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
     subprocess.run(command, check=True, timeout=120)
