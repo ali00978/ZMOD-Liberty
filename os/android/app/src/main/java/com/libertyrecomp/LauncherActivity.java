@@ -859,6 +859,71 @@ public class LauncherActivity extends Activity {
         saveSettings(false);
         toast("Original engine/config restored; backup in g925-official-backups.");
     }
+
+    /** Opt-in 40 FPS baseline: 25ms frame budget, not a promised frame rate.
+     *  Keep the proven native renderer and system Mali driver; only use
+     *  existing cvars. Other launcher selections remain unchanged.
+     */
+    private void applyG925Steady40Profile() {
+        if (!BuildConfig.G925_NATIVE_EDITION) return;
+        final String[][] selected = {
+                {"gta4_output_height_cap", "720"},
+                {"gta4_native_upscaler", "native"},
+                {"gta4_native_anti_aliasing", "off"},
+                {"gta4_frame_limit", "40"},
+                {"gta4_draw_distance_scale", "0.8"},
+                {"gta4_traffic_density_scale", "0.3"},
+                {"gta4_shadow_map_base_size", "256"},
+                {"gta4_reflection_aa", "off"},
+                {"gta4_extra_frames_in_flight", "2"},
+                {"android_performance_hint_target_ms", "16"},
+                {"android_performance_hint_report_interval_ms", "16"},
+                {"android_performance_hint_stable_threads", "true"},
+                {"android_performance_hint", "true"},
+                {"gta4_dynamic_draw_distance", "true"},
+                {"gta4_fps_guard", "2"},
+                {"android_thermal_guard", "true"}
+        };
+        // The launcher's selections are the single source of truth; avoid
+        // writing duplicate CLI flags or silently resetting unrelated settings.
+        int applied = 0;
+        for (String[] item : selected) {
+            for (int index = 0; index < GRAPHICS_SETTINGS.length; ++index) {
+                GraphicsSetting setting = GRAPHICS_SETTINGS[index];
+                if (!setting.cvars[0].equals(item[0])) continue;
+                for (int value = 0; value < setting.values.length; ++value) {
+                    if (!setting.values[value].equals(item[1])) continue;
+                    if (mGraphicsSpinners[index] == null) continue;
+                    mGraphicsSpinners[index].setSelection(value + 1, false);
+                    mGraphicsPositions[index] = value + 1;
+                    ++applied;
+                    break;
+                }
+                break;
+            }
+        }
+        if (applied != selected.length) {
+            toast("40 FPS profile incomplete: settings not saved");
+            return;
+        }
+        markSettingsChanged();
+        // Existing graphics.txt is kept as a recovery copy the first time
+        // the boost profile is selected. Saves/game data are never touched.
+        File existing = new File(mDataRoot, LibertyActivity.GRAPHICS_FILE);
+        File recovery = new File(mDataRoot, "graphics-before-g925-40fps.txt");
+        if (existing.isFile() && !recovery.exists()) {
+            try {
+                Files.copy(existing.toPath(), recovery.toPath());
+            } catch (IOException e) {
+                Log.w(TAG, "Could not back up previous graphics profile", e);
+                toast("Could not back up existing graphics settings; save manually");
+                return;
+            }
+        }
+        saveSettings(false);
+        toast("G925 40 FPS profile saved. Restart game; compare FPS and p95.");
+    }
+
     // Graphics settings: one dropdown per setting, saved to graphics.txt, which
     // LibertyActivity appends after args.txt. "Default" writes nothing, so the
     // value from args.txt applies.
@@ -1100,6 +1165,19 @@ public class LauncherActivity extends Activity {
         });
         card.addView(official40, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+
+        // Explicit, reversible option for players prioritising playable 40 FPS.
+        // Classic stays untouched. This changes only launcher-owned cvars.
+        if (BuildConfig.G925_NATIVE_EDITION) {
+            Button steady40 = button("G925 NATIVE / 40 FPS PERFORMANCE", true);
+            steady40.setOnClickListener(v -> applyG925Steady40Profile());
+            card.addView(steady40, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+            card.addView(text("One-tap 720p/40 FPS CPU+GPU profile. Reduces draw distance, "
+                    + "population and reflection AA. Saves settings; launch the game to test. "
+                    + "Existing game files, saves and drivers are never changed.",
+                    12, R.color.picker_muted), matchWrap(dp(8)));
+        }
         Button official60 = button("ORIGINAL GRAPHICS / 60 FPS CAP", false);
         official60.setOnClickListener(v -> {
             chooseOfficialFrameCap("60", false);

@@ -24,7 +24,7 @@ on:
   # Build a child branch against the verified 2.6 base so GitHub permits
   # restoring that base branch's compiler cache (sibling push builds cannot).
   pull_request:
-    branches: [feature/g925-stable-16ms-v26]
+    branches: [feature/g925-stable-16ms-v26, feature/g925-v239-steady40-native]
     types: [opened, synchronize, reopened]
     paths-ignore:
       - '**.md'
@@ -156,6 +156,7 @@ jobs:
           python tools/test_g925_memo_resolve_v215.py
           python tools/test_g925_render_hotpaths_v216.py
           python tools/test_g925_fps_cache_v238.py
+          python tools/test_g925_steady40_v239.py
           python tools/test_g925_stutter_retirement_v217.py
           python tools/test_g925_hint_target_v218.py
           python tools/test_g925_surface_retirement_v219.py
