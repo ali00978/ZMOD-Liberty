@@ -917,27 +917,10 @@ public class LauncherActivity extends Activity {
             java.util.List<String> original = graphics.isFile()
                     ? Files.readAllLines(graphics.toPath(), StandardCharsets.UTF_8)
                     : java.util.Collections.emptyList();
-            StringBuilder merged = new StringBuilder();
-            for (String line : original) {
-                String trimmed = line.trim();
-                boolean isSchedulingOverride = false;
-                int equals = trimmed.indexOf('=');
-                if (trimmed.startsWith("--") && equals > 2) {
-                    String key = trimmed.substring(2, equals);
-                    for (String[] item : selected) {
-                        if (item[0].equals(key)) {
-                            isSchedulingOverride = true;
-                            break;
-                        }
-                    }
-                }
-                if (!isSchedulingOverride) merged.append(line).append('\n');
-            }
-            for (String[] item : selected)
-                merged.append("--").append(item[0]).append('=').append(item[1]).append('\n');
+            String merged = G925FullQualityCvarMerge.merge(original, selected);
             if (graphics.isFile() && !backup.exists())
                 Files.copy(graphics.toPath(), backup.toPath());
-            writeCleanConfig(graphics, merged.toString().getBytes(StandardCharsets.UTF_8));
+            writeCleanConfig(graphics, merged.getBytes(StandardCharsets.UTF_8));
         } catch (IOException e) {
             Log.w(TAG, "Could not save full-quality scheduling settings", e);
             toast("FPS boost not saved; original settings kept");
