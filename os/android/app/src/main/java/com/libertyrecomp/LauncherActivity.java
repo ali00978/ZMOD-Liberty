@@ -903,16 +903,45 @@ public class LauncherActivity extends Activity {
             settingIndices[entry] = matchedSetting;
             selectedChoices[entry] = matchedChoice;
         }
+        // The normal Save action rebuilds graphics.txt from known dropdowns,
+        // which can erase advanced user-supplied visual cvars. For this
+        // fidelity-only action, merge the six CPU/scheduling overrides with
+        // every original line byte-for-byte aside from line endings.
+        if (mSettingsDirty) {
+            toast("Save your other changes first, then apply full-quality FPS boost");
+            return;
+        }
         File graphics = new File(mDataRoot, LibertyActivity.GRAPHICS_FILE);
         File backup = new File(mDataRoot, "graphics-before-g925-full-quality.txt");
-        if (graphics.isFile() && !backup.exists()) {
-            try {
-                Files.copy(graphics.toPath(), backup.toPath());
-            } catch (IOException e) {
-                Log.w(TAG, "Could not back up full-quality graphics settings", e);
-                toast("Backup failed; original settings unchanged");
-                return;
+        try {
+            java.util.List<String> original = graphics.isFile()
+                    ? Files.readAllLines(graphics.toPath(), StandardCharsets.UTF_8)
+                    : java.util.Collections.emptyList();
+            StringBuilder merged = new StringBuilder();
+            for (String line : original) {
+                String trimmed = line.trim();
+                boolean isSchedulingOverride = false;
+                int equals = trimmed.indexOf('=');
+                if (trimmed.startsWith("--") && equals > 2) {
+                    String key = trimmed.substring(2, equals);
+                    for (String[] item : selected) {
+                        if (item[0].equals(key)) {
+                            isSchedulingOverride = true;
+                            break;
+                        }
+                    }
+                }
+                if (!isSchedulingOverride) merged.append(line).append('\n');
             }
+            for (String[] item : selected)
+                merged.append("--").append(item[0]).append('=').append(item[1]).append('\n');
+            if (graphics.isFile() && !backup.exists())
+                Files.copy(graphics.toPath(), backup.toPath());
+            writeCleanConfig(graphics, merged.toString().getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            Log.w(TAG, "Could not save full-quality scheduling settings", e);
+            toast("FPS boost not saved; original settings kept");
+            return;
         }
         for (int entry = 0; entry < selected.length; ++entry) {
             int index = settingIndices[entry];
@@ -920,9 +949,8 @@ public class LauncherActivity extends Activity {
             mGraphicsSpinners[index].setSelection(choice, false);
             mGraphicsPositions[index] = choice;
         }
-        markSettingsChanged();
-        saveSettings(false);
-        toast("FPS scheduling saved. All graphics quality settings kept.");
+        updateSaveStatus();
+        toast("FPS scheduling saved. Every visual graphics option preserved.");
     }
 
     /**
