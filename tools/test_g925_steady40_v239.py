@@ -27,8 +27,8 @@ assert "saveSettings(false)" in profile
 assert "if (!BuildConfig.G925_NATIVE_EDITION) return;" in profile
 assert "if (applied != selected.length)" in profile
 assert "markSettingsChanged()" in profile
-assert int(re.search(r"versionCode\\s*=\\s*(\\d+)", gradle).group(1)) >= 67
-release = re.search(r"versionSuffix\\s*=\\s*\\\"-alpha-2\\.(\\d+)-g925-", gradle)
+assert int(re.search(r"versionCode\s*=\s*(\d+)", gradle).group(1)) >= 67
+release = re.search(r'versionSuffix\s*=\s*"-alpha-2\.(\d+)-g925-', gradle)
 assert release and int(release.group(1)) >= 39
 assert "addUnlessConfigured" in native_defaults  # user's explicit CPU choices still take priority
 
