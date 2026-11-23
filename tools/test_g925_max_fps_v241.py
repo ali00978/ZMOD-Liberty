@@ -35,6 +35,15 @@ for prohibited in (
 ):
     assert prohibited not in profile, prohibited
 
+assert 'button("RESTORE PREVIOUS GRAPHICS BACKUP", false)' in launcher
+assert "restoreG925GraphicsBackup()" in launcher
+restore = launcher[launcher.index("private void restoreG925GraphicsBackup()"):
+                   launcher.index("// Graphics settings: one dropdown")]
+assert '"graphics-before-g925-40fps.txt"' in restore
+assert '"graphics-before-g925-maxfps.txt"' in restore
+assert '"graphics-before-quality-restore.txt"' in restore
+assert "REPLACE_EXISTING" in restore
+assert "mGraphicsPositions[index] = selection;" in restore
 assert "applyG925MaxFpsProfile()" not in launcher
 assert "applyG925Steady40Profile()" not in launcher
 assert "MAX FPS (LOW GRAPHICS)" not in launcher
