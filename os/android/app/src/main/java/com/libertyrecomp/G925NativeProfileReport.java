@@ -299,6 +299,14 @@ final class G925NativeProfileReport {
             }
         }
         result.append(detail != null ? detail : "\nCPU operation detail: unavailable\n");
+        // The production capture also exports per-frame transport, GPU
+        // pass attribution and CPU shader-phase costs. These are the missing
+        // discriminators between CPU queue waits and expensive Vulkan passes.
+        // Missing/old CSVs remain optional, and all joins use exact frame IDs.
+        if (captureFrames.size() == count) {
+            result.append(G925DeepProfileSummary.summarize(csv.getParentFile(),
+                    captureStartedAt, captureFrames));
+        }
         slowFrames.sort(Collections.reverseOrder());
         result.append("\nSlowest sampled game intervals:\n");
         for (int i = 0; i < Math.min(8, slowFrames.size()); ++i) {
