@@ -32,7 +32,7 @@ assert 'LIBERTY_EDITION=g925native bash os/android/scripts/build_apk.sh debug' i
 assert workflow.count("Upload independent G925 Native APK") == 2
 assert workflow.count("Test standalone G925 Native package and startup defaults") == 2
 assert "package: name='com.zmodliberty.g925native'" in workflow
-assert 'ZMOD-Liberty-G925-Native-v3.1-armv9.apk' in workflow
+assert 'ZMOD-Liberty-G925-Native-v3.2-armv9.apk' in workflow
 assert 'LIBERTY_EDITION=g925native' in workflow
 for forbidden in ("gta4_native_upscaler", "gta4_native_shadow_interval",
                   "gta4_draw_distance_scale", "android_gpu_turbo"):
