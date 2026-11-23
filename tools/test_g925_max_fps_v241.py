@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """G925 v2.42: protected full-quality performance profile, no visual downgrades."""
 from pathlib import Path
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 
 root = Path(__file__).resolve().parents[1]
 launcher = (root / "os/android/app/src/main/java/com/libertyrecomp/LauncherActivity.java").read_text(encoding="utf-8")
@@ -53,7 +57,11 @@ assert "fullQuality.setOnClickListener(v -> applyG925FullQualityPerformanceProfi
 assert 'new File(mDataRoot, "graphics-before-g925-full-quality.txt")' in profile
 assert profile.index("Files.copy(graphics.toPath()") < profile.index("mGraphicsSpinners[index].setSelection(choice")
 assert profile.index("int[] settingIndices") < profile.index("mGraphicsSpinners[index].setSelection(choice")
-assert "saveSettings(false);" in profile
+assert "G925FullQualityCvarMerge.merge(original, selected)" in profile
+assert "writeCleanConfig(graphics, merged.getBytes(StandardCharsets.UTF_8))" in profile
+assert "if (mSettingsDirty)" in profile
+assert "saveSettings(false);" not in profile
+assert "writeGraphicsSettings();" not in profile
 
 # Every setting is guaranteed to exist in the launcher and have the expected
 # exact backing cvar value, so no half-application or accidental downgrade.
@@ -71,5 +79,17 @@ assert "versionCode   = 70" in gradle
 assert "-alpha-2.42-g925-fullquality" in gradle
 assert 'ZMOD-Liberty-G925-Native-v3.3-armv9.apk' in workflow
 assert "python tools/test_g925_max_fps_v241.py" in workflow
+
+# Compile a real Java regression for duplicate CPU options and preservation of
+# every known, unknown and user-custom visual cvar across repeated upgrades.
+javac = os.environ.get("G925_TEST_JAVAC") or shutil.which("javac")
+java = shutil.which("java")
+if not javac or not java:
+    raise SystemExit("Java 17 JDK required for lossless G925 quality preservation")
+with tempfile.TemporaryDirectory(prefix="g925-full-quality-") as folder:
+    subprocess.run([javac, "-encoding", "UTF-8", "-d", folder,
+        str(root / "os/android/app/src/main/java/com/libertyrecomp/G925FullQualityCvarMerge.java"),
+        str(root / "tools/fixtures/g925/G925FullQualityCvarMergeTest.java")], check=True)
+    subprocess.run([java, "-cp", folder, "com.libertyrecomp.G925FullQualityCvarMergeTest"], check=True)
 
 print("PASS: G925 fps-scheduling only; no 540p/density/draw-distance/shadow/reflection changes")
