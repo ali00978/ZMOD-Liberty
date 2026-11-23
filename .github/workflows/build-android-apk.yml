@@ -158,6 +158,7 @@ jobs:
           python tools/test_g925_fps_cache_v238.py
           python tools/test_g925_steady40_v239.py
           python tools/test_g925_vertex_work_v240.py
+          python tools/test_g925_max_fps_v241.py
           python tools/test_g925_stutter_retirement_v217.py
           python tools/test_g925_hint_target_v218.py
           python tools/test_g925_surface_retirement_v219.py
