@@ -887,26 +887,30 @@ public class LauncherActivity extends Activity {
         };
         // Validate every value before mutating any dropdown. Never save a
         // half-applied profile when a future UI revision removes a choice.
-        int[] positions = new int[selected.length];
+        int[] settingIndices = new int[selected.length];
+        int[] selectedChoices = new int[selected.length];
         for (int entry = 0; entry < selected.length; ++entry) {
-            int match = -1;
+            int matchedSetting = -1;
+            int matchedChoice = -1;
             for (int index = 0; index < GRAPHICS_SETTINGS.length; ++index) {
                 GraphicsSetting setting = GRAPHICS_SETTINGS[index];
                 if (!setting.cvars[0].equals(selected[entry][0])) continue;
                 if (mGraphicsSpinners[index] == null) break;
                 for (int value = 0; value < setting.values.length; ++value) {
                     if (setting.values[value].equals(selected[entry][1])) {
-                        match = index * 100 + value + 1;
+                        matchedSetting = index;
+                        matchedChoice = value + 1;
                         break;
                     }
                 }
                 break;
             }
-            if (match < 0) {
+            if (matchedSetting < 0) {
                 toast("Max FPS settings unavailable; nothing saved");
                 return;
             }
-            positions[entry] = match;
+            settingIndices[entry] = matchedSetting;
+            selectedChoices[entry] = matchedChoice;
         }
         // Preserve the user's prior settings exactly once, before any save.
         File existing = new File(mDataRoot, LibertyActivity.GRAPHICS_FILE);
@@ -920,9 +924,9 @@ public class LauncherActivity extends Activity {
                 return;
             }
         }
-        for (int encoded : positions) {
-            int index = encoded / 100;
-            int choice = encoded % 100;
+        for (int entry = 0; entry < selected.length; ++entry) {
+            int index = settingIndices[entry];
+            int choice = selectedChoices[entry];
             mGraphicsSpinners[index].setSelection(choice, false);
             mGraphicsPositions[index] = choice;
         }
@@ -1247,6 +1251,15 @@ public class LauncherActivity extends Activity {
             card.addView(text("One-tap 720p/40 FPS CPU+GPU profile. Reduces draw distance, "
                     + "population and reflection AA. Saves settings; launch the game to test. "
                     + "Existing game files, saves and drivers are never changed.",
+                    12, R.color.picker_muted), matchWrap(dp(8)));
+
+            Button maxFps = button("G925 NATIVE / MAX FPS (LOW GRAPHICS)", true);
+            maxFps.setOnClickListener(v -> applyG925MaxFpsProfile());
+            card.addView(maxFps, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+            card.addView(text("Experimental 540p, 20% population, 60% draw distance, "
+                    + "low shadows and AA off, 60 FPS cap. Visual quality is reduced; "
+                    + "actual FPS may be lower. Prior graphics settings are backed up.",
                     12, R.color.picker_muted), matchWrap(dp(8)));
         }
         Button official60 = button("ORIGINAL GRAPHICS / 60 FPS CAP", false);
