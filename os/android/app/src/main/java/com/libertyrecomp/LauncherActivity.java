@@ -925,6 +925,58 @@ public class LauncherActivity extends Activity {
         toast("FPS scheduling saved. All graphics quality settings kept.");
     }
 
+    /**
+     * Explicit recovery for people who used the old 2.39/2.41 reduced-
+     * quality profiles. Prefer the earliest backup (before 40 FPS profile),
+     * otherwise the backup made before Max FPS. Never restore automatically
+     * or overwrite user choices without pressing the recovery button.
+     */
+    private void restoreG925GraphicsBackup() {
+        if (!BuildConfig.G925_NATIVE_EDITION) return;
+        File before40 = new File(mDataRoot, "graphics-before-g925-40fps.txt");
+        File beforeMax = new File(mDataRoot, "graphics-before-g925-maxfps.txt");
+        File previous = before40.isFile() ? before40 : beforeMax;
+        if (!previous.isFile()) {
+            toast("No previous quality profile backup was found");
+            return;
+        }
+        File current = new File(mDataRoot, LibertyActivity.GRAPHICS_FILE);
+        File undo = new File(mDataRoot, "graphics-before-quality-restore.txt");
+        try {
+            if (current.isFile() && !undo.exists())
+                Files.copy(current.toPath(), undo.toPath());
+            Files.copy(previous.toPath(), current.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            Log.w(TAG, "Restoring original G925 graphics profile failed", e);
+            toast("Could not restore original graphics settings");
+            return;
+        }
+        java.util.Map<String, String> restored = readGraphicsSettings();
+        mGraphicsLoading = true;
+        try {
+            for (int index = 0; index < GRAPHICS_SETTINGS.length; ++index) {
+                GraphicsSetting setting = GRAPHICS_SETTINGS[index];
+                int selection = 0;
+                String value = restored.get(setting.cvars[0]);
+                for (int choice = 0; choice < setting.values.length; ++choice) {
+                    if (setting.values[choice].equals(value)) {
+                        selection = choice + 1;
+                        break;
+                    }
+                }
+                if (mGraphicsSpinners[index] == null) continue;
+                mGraphicsSpinners[index].setSelection(selection, false);
+                mGraphicsPositions[index] = selection;
+            }
+        } finally {
+            mGraphicsLoading = false;
+        }
+        mSettingsDirty = false;
+        updateSaveStatus();
+        toast("Previous graphics restored. Restart GTA IV to apply.");
+    }
+
     // Graphics settings: one dropdown per setting, saved to graphics.txt, which
     // LibertyActivity appends after args.txt. "Default" writes nothing, so the
     // value from args.txt applies.
@@ -1175,6 +1227,13 @@ public class LauncherActivity extends Activity {
             card.addView(text("Keeps your resolution, population, draw distance, shadows, "
                     + "reflections, texture quality and effects unchanged. Sets a 60 FPS "
                     + "limit and 16ms Android CPU hints only. Actual FPS is not guaranteed.",
+                    12, R.color.picker_muted), matchWrap(dp(8)));
+            Button restoreQuality = button("RESTORE PREVIOUS GRAPHICS BACKUP", false);
+            restoreQuality.setOnClickListener(v -> restoreG925GraphicsBackup());
+            card.addView(restoreQuality, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+            card.addView(text("Only needed if you previously used a reduced-quality "
+                    + "G925 preset; restores your original graphics.txt when a backup exists.",
                     12, R.color.picker_muted), matchWrap(dp(8)));
         }
         Button official60 = button("ORIGINAL GRAPHICS / 60 FPS CAP", false);
