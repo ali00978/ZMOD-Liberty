@@ -65,15 +65,22 @@ template <typename Index>
 bool OptimizeTriangleListForVertexCache(const Index* indices, uint32_t triangle_count,
                                         Index* out) {
   using namespace vertex_cache_detail;
-  const uint32_t index_count = triangle_count * 3;
-  if (!triangle_count) return false;
+  // Guard malformed or extreme guest counts before index arithmetic.
+  if (!indices || !out || !triangle_count || triangle_count > UINT32_MAX / 3u)
+    return false;
+  const uint32_t index_count = triangle_count * 3u;
   Index minimum = indices[0], maximum = indices[0];
   for (uint32_t i = 1; i < index_count; ++i) {
     minimum = std::min(minimum, indices[i]);
     maximum = std::max(maximum, indices[i]);
   }
-  const uint32_t vertex_count = uint32_t(maximum - minimum) + 1;
-  if (vertex_count > index_count * 4 + 1024) return false;
+  // A [0, UINT32_MAX] index range used to wrap vertex_count to zero
+  // and then access an empty adjacency array. Reject sparse/overflowed ranges
+  // and let the original-order Vulkan draw handle them instead.
+  const uint64_t vertex_span = uint64_t(maximum) - uint64_t(minimum) + 1u;
+  if (vertex_span > UINT32_MAX ||
+      vertex_span > uint64_t(index_count) * 4u + 1024u) return false;
+  const uint32_t vertex_count = static_cast<uint32_t>(vertex_span);
 
   std::vector<uint32_t> triangle_offsets(vertex_count + 1, 0);  // CSR adjacency
   for (uint32_t i = 0; i < index_count; ++i) ++triangle_offsets[indices[i] - minimum + 1];
@@ -202,6 +209,10 @@ class NativeVertexCacheOptimizer {
     // phone CPUs. Previously we allocated and copied the ENTIRE index range
     // before discovering that all 512 queue slots were occupied. Backpressure
     // must be tested before reading guest indices or allocating CPU memory.
+    // Tiny and incomplete ranges stay in original order: no background job,
+    // heap copy or worker CPU contention is needed for their draw.
+    if (!range || !indices || !G925VertexRangeWorthOptimizing(index_count))
+      return false;
     // This is a performance hint: the locked check below remains authoritative.
     const size_t bytes = size_t(index_count) * (index32 ? 4u : 2u);
     // Bound queued source copies as well as job count. Without this budget a
@@ -248,6 +259,14 @@ class NativeVertexCacheOptimizer {
         jobs_.pop_front();
         queued_bytes_.fetch_sub(job.source.size(), std::memory_order_release);
         queued_count_.store(jobs_.size(), std::memory_order_release);
+      }
+      // When the renderer has already evicted the mesh, the job owns its
+      // last strong reference. Avoid a wasted, potentially large reorder;
+      // a concurrently acquired weak reference will see the safe fallback.
+      if (job.range.use_count() == 1) {
+        job.range->state.store(NativeVertexCacheRange::kUnusable,
+                               std::memory_order_release);
+        continue;
       }
       job.range->indices.resize(job.source.size());
       const uint32_t triangles = job.index_count / 3;
