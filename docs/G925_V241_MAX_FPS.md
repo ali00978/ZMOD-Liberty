@@ -1,3 +1,9 @@
+> **RETIRED in v2.42 at the user's request.** The 540p, reduced-population
+> and reduced-draw-distance Max FPS preset was removed before release.
+> This document records a superseded experiment, not current app behavior.
+> The active profile preserves every graphical quality setting; see
+> [G925_V242_FULL_QUALITY.md](G925_V242_FULL_QUALITY.md).
+
 # G925 Native v2.41 — actual frame-work reduction (Max FPS experiment)
 
 This release keeps the v2.40 background-vertex safety fixes and adds an
