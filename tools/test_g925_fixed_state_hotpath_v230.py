@@ -29,7 +29,7 @@ assert 'gta4_trace_native_renderer, false, "GTA IV/Diagnostics"' in code
 gradle = (root / "os/android/app/build.gradle.kts").read_text()
 match = re.search(r"versionCode\s*=\s*(\d+)", gradle)
 assert match and int(match.group(1)) >= 58
-assert re.search(r"-alpha-2\.(?:30|3\d)-g925-", gradle)
+assert re.search(r"-alpha-2\.(?:30|[3-9]\d)-g925-", gradle)
 workflow = (root / ".github/workflows/build-android-apk.yml").read_text()
 assert "python tools/test_g925_fixed_state_hotpath_v230.py" in workflow
 print("PASS: no diagnostic hashes in gameplay; integrity and draw-state checks retained")
