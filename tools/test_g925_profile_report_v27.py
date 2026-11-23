@@ -21,5 +21,7 @@ with tempfile.TemporaryDirectory(prefix='g925-report-') as tmp:
     subprocess.run(compiler + ['--release', '17', '-d', str(output), str(stub),
                     str(ROOT / 'os/android/app/src/main/java/com/libertyrecomp/G925NativeProfileReport.java'),
                     str(ROOT / 'os/android/app/src/main/java/com/libertyrecomp/G925DeepProfileSummary.java'),
-                    str(ROOT / 'tools/fixtures/g925/G925ProfileReportTest.java')], check=True)
+                    str(ROOT / 'tools/fixtures/g925/G925ProfileReportTest.java'),
+                    str(ROOT / 'tools/fixtures/g925/G925DeepProfileSummaryTest.java')], check=True)
     subprocess.run([java, '-cp', str(output), 'com.libertyrecomp.G925ProfileReportTest', str(fixture)], check=True)
+    subprocess.run([java, '-cp', str(output), 'com.libertyrecomp.G925DeepProfileSummaryTest'], check=True)
