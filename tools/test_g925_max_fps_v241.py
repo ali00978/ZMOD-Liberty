@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""G925 v2.42: protected full-quality performance profile, no visual downgrades."""
+"""G925 v2.43: protected CPU boost plus explicit full visual fidelity recovery."""
 from pathlib import Path
 import os
 import re
@@ -13,7 +13,7 @@ gradle = (root / "os/android/app/build.gradle.kts").read_text(encoding="utf-8")
 workflow = (root / ".github/workflows/build-android-apk.yml").read_text(encoding="utf-8")
 
 start = launcher.index("private void applyG925FullQualityPerformanceProfile()")
-end = launcher.index("// Graphics settings: one dropdown", start)
+end = launcher.index("private void restoreG925GraphicsBackup()", start)
 profile = launcher[start:end]
 selected = dict(re.findall(r'\{"([^"]+)", "([^"]+)"\}', profile))
 required = {
@@ -75,9 +75,28 @@ for key, value in required.items():
             matches.append(arrays[-1])
     assert len(matches) == 1 and f'"{value}"' in matches[0], (key, value, matches)
 
-assert "versionCode   = 70" in gradle
-assert "-alpha-2.42-g925-fullquality" in gradle
-assert 'ZMOD-Liberty-G925-Native-v3.3-armv9.apk' in workflow
+# The separate user-triggered fidelity repair restores the source-quality
+# draw distance and reflection refresh without overriding unrelated choices.
+visual = launcher[launcher.index("private void restoreG925FullGraphics()"):
+                  launcher.index("// Graphics settings: one dropdown")]
+visualSelected = dict(re.findall(r'\{"([^"]+)", "([^"]+)"\}', visual))
+assert visualSelected == {
+    "gta4_dynamic_draw_distance": "false",
+    "gta4_draw_distance_scale": "1.0",
+    "gta4_fps_guard": "0",
+}, visualSelected
+assert 'graphics-before-g925-full-visual-restore.txt' in visual
+assert 'if (mSettingsDirty)' in visual
+assert 'G925FullQualityCvarMerge.merge(original, selected)' in visual
+assert 'writeCleanConfig(graphics, merged.getBytes(StandardCharsets.UTF_8))' in visual
+assert 'mGraphicsSpinners[index].setSelection(choice, false)' in visual
+assert 'saveSettings(false)' not in visual
+assert 'button("RESTORE FULL DRAW DISTANCE + REFLECTIONS", true)' in launcher
+assert 'restoreVisuals.setOnClickListener(v -> restoreG925FullGraphics())' in launcher
+
+assert "versionCode   = 71" in gradle
+assert "-alpha-2.43-g925-fidelity" in gradle
+assert 'ZMOD-Liberty-G925-Native-v3.4-armv9.apk' in workflow
 assert "python tools/test_g925_max_fps_v241.py" in workflow
 
 # Compile a real Java regression for duplicate CPU options and preservation of
@@ -92,4 +111,4 @@ with tempfile.TemporaryDirectory(prefix="g925-full-quality-") as folder:
         str(root / "tools/fixtures/g925/G925FullQualityCvarMergeTest.java")], check=True)
     subprocess.run([java, "-cp", folder, "com.libertyrecomp.G925FullQualityCvarMergeTest"], check=True)
 
-print("PASS: G925 fps-scheduling only; no 540p/density/draw-distance/shadow/reflection changes")
+print("PASS: optional full-distance/reflection recovery; no other visual or performance options changed")

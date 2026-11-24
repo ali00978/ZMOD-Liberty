@@ -989,6 +989,81 @@ public class LauncherActivity extends Activity {
         toast("Previous graphics restored. Restart GTA IV to apply.");
     }
 
+    /**
+     * The previous Max FPS/steady40 experiments may have left quality guards
+     * active in this separate app's persisted graphics.txt. The generic FPS
+     * boost deliberately preserves those values, so it cannot repair them.
+     * This explicit action restores the native console draw-distance scale
+     * and the original reflection cadence. It never changes texture,
+     * resolution, AA, population, shadows, upscaling or CPU settings.
+     */
+    private void restoreG925FullGraphics() {
+        if (!BuildConfig.G925_NATIVE_EDITION) return;
+        final String[][] selected = {
+                {"gta4_dynamic_draw_distance", "false"},
+                {"gta4_draw_distance_scale", "1.0"},
+                {"gta4_fps_guard", "0"}
+        };
+        if (mSettingsDirty) {
+            toast("Save your other changes first, then restore full graphics");
+            return;
+        }
+        int[] indices = new int[selected.length];
+        int[] choices = new int[selected.length];
+        for (int entry = 0; entry < selected.length; ++entry) {
+            int index = -1;
+            int choice = -1;
+            for (int settingIndex = 0; settingIndex < GRAPHICS_SETTINGS.length; ++settingIndex) {
+                GraphicsSetting setting = GRAPHICS_SETTINGS[settingIndex];
+                if (!setting.cvars[0].equals(selected[entry][0])) continue;
+                if (mGraphicsSpinners[settingIndex] == null) break;
+                for (int candidate = 0; candidate < setting.values.length; ++candidate) {
+                    if (setting.values[candidate].equals(selected[entry][1])) {
+                        index = settingIndex;
+                        choice = candidate + 1;
+                        break;
+                    }
+                }
+                break;
+            }
+            if (index < 0 || choice < 0) {
+                toast("Full graphics restore unavailable; nothing changed");
+                return;
+            }
+            indices[entry] = index;
+            choices[entry] = choice;
+        }
+        File graphics = new File(mDataRoot, LibertyActivity.GRAPHICS_FILE);
+        File backup = new File(mDataRoot, "graphics-before-g925-full-visual-restore.txt");
+        try {
+            java.util.List<String> original = graphics.isFile()
+                    ? Files.readAllLines(graphics.toPath(), StandardCharsets.UTF_8)
+                    : java.util.Collections.emptyList();
+            String merged = G925FullQualityCvarMerge.merge(original, selected);
+            if (graphics.isFile() && !backup.exists()) {
+                Files.copy(graphics.toPath(), backup.toPath());
+            }
+            writeCleanConfig(graphics, merged.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            Log.w(TAG, "Could not restore G925 full graphics settings", e);
+            toast("Graphics restore not saved; original configuration kept");
+            return;
+        }
+        mGraphicsLoading = true;
+        try {
+            for (int entry = 0; entry < selected.length; ++entry) {
+                int index = indices[entry];
+                int choice = choices[entry];
+                mGraphicsSpinners[index].setSelection(choice, false);
+                mGraphicsPositions[index] = choice;
+            }
+        } finally {
+            mGraphicsLoading = false;
+        }
+        updateSaveStatus();
+        toast("Console draw distance and reflection cadence restored. Restart GTA IV.");
+    }
+
     // Graphics settings: one dropdown per setting, saved to graphics.txt, which
     // LibertyActivity appends after args.txt. "Default" writes nothing, so the
     // value from args.txt applies.
@@ -1239,6 +1314,15 @@ public class LauncherActivity extends Activity {
             card.addView(text("Keeps your resolution, population, draw distance, shadows, "
                     + "reflections, texture quality and effects unchanged. Sets a 60 FPS "
                     + "limit and 16ms Android CPU hints only. Actual FPS is not guaranteed.",
+                    12, R.color.picker_muted), matchWrap(dp(8)));
+            Button restoreVisuals = button("RESTORE FULL DRAW DISTANCE + REFLECTIONS", true);
+            restoreVisuals.setOnClickListener(v -> restoreG925FullGraphics());
+            card.addView(restoreVisuals, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+            card.addView(text("Stops automatic distance reduction, restores 100% console "
+                    + "draw distance and normal reflection refresh. Keeps resolution, "
+                    + "textures, shadows, population and other settings untouched. "
+                    + "FPS may decrease; existing settings are backed up.",
                     12, R.color.picker_muted), matchWrap(dp(8)));
             Button restoreQuality = button("RESTORE PREVIOUS GRAPHICS BACKUP", false);
             restoreQuality.setOnClickListener(v -> restoreG925GraphicsBackup());
