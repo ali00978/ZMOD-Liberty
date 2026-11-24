@@ -12,6 +12,10 @@ header = (SDK / "src/graphics/gta4_native/native_sparse_index_batch.h").read_tex
 renderer = (SDK / "src/graphics/gta4_native/graphics_system.cpp").read_text()
 pipeline = (ROOT / ".github/workflows/build-android-apk.yml").read_text()
 gradle = (ROOT / "os/android/app/build.gradle.kts").read_text()
+launcher = (ROOT / "os/android/app/src/main/java/com/libertyrecomp/LauncherActivity.java").read_text()
+report = (ROOT / "os/android/app/src/main/java/com/libertyrecomp/G925NativeProfileReport.java").read_text()
+counters_h = (SDK / "src/graphics/gta4_native/native_performance_samples.h").read_text()
+counters_cpp = (SDK / "src/graphics/gta4_native/native_performance_samples.cpp").read_text()
 
 for code in (
     "NativeSparseTriangleBatchNeedsRebase(",
@@ -62,6 +66,15 @@ assert "python tools/test_g925_rebased_index_batch_v244.py" in pipeline
 assert "versionCode   = 72" in gradle
 assert "-alpha-2.44-g925-rebased" in gradle
 assert "ZMOD-Liberty-G925-Native-v3.5-armv9.apk" in pipeline
+assert 'new GraphicsSetting("Indexed draw batching"' in launcher
+assert 'new String[] {"gta4_native_merge_rebased_indexed_draws"}' in launcher
+assert 'new String[] {"true", "false"}' in launcher
+assert 'case "Indexed draw batching":' in launcher
+assert 'counter_rebased_indexed_draws_merged' in report
+assert 'gta4_native_merge_rebased_indexed_draws' in report
+assert "kRebasedIndexedDrawsMerged" in counters_h
+assert '"rebased-indexed-draws-merged"' in counters_cpp
+assert "performance::Counter::kRebasedIndexedDrawsMerged" in renderer
 assert not any(key in renderer[renderer.index('REXCVAR_DEFINE_BOOL(gta4_native_merge_rebased_indexed_draws'):
                                  renderer.index('REXCVAR_DEFINE_BOOL(gta4_native_merge_sequential_draws')]
                for key in ("gta4_draw_distance_scale", "gta4_output_height_cap", "gta4_fps_guard"))
