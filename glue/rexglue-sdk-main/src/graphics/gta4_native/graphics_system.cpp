@@ -364,6 +364,12 @@ REXCVAR_DEFINE_BOOL(gta4_native_merge_sparse_indexed_draws, true,
                     "GTA IV/Graphics/Native Renderer",
                     "Batch 2 tiny, 3 small or 4+ nonadjacent opaque triangle-list draws with identical state "
                     "as one indexed Vulkan draw using byte-identical index ranges");
+// Only the independent G925 X launcher opts in. The classic and v3.5
+// applications keep their existing sparse merge behavior and user settings.
+REXCVAR_DEFINE_BOOL(gta4_native_g925x_adaptive_sparse, false,
+                    "GTA IV/Graphics/Native Renderer",
+                    "Avoid repeated unproductive CPU sparse merge searches while still "
+                    "probing periodically and preserving all indexed draws");
 REXCVAR_DEFINE_BOOL(gta4_native_merge_rebased_indexed_draws, true,
                     "GTA IV/Graphics/Native Renderer",
                     "Merge otherwise identical opaque indexed triangle draws with differing base vertices "
@@ -30010,6 +30016,17 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
   const profile::CpuPhaseScope profile_phase(profile::CpuPhase::kRecording);
   const profile::CpuScope profile_scope(profile::CpuOp::kRecordFrame);
 
+  // The G925 X variant checks whether the optional sparse batching pass
+  // actually merged any draw. If it never does, skip only that speculative
+  // search on most passes. Original draws and contiguous merges are untouched.
+  const bool g925x_adaptive_sparse = REXCVAR_GET(gta4_native_g925x_adaptive_sparse);
+  const bool g925x_probe_sparse = !g925x_adaptive_sparse || g925x_sparse_policy_.BeginPass();
+  uint32_t g925x_sparse_draws_saved = 0;
+  const auto g925x_sparse_pass_end = MakeScopeExit([&] {
+    if (g925x_adaptive_sparse)
+      g925x_sparse_policy_.EndPass(g925x_probe_sparse, g925x_sparse_draws_saved != 0);
+  });
+
   SCOPE_profile_cpu_i("gpu", "GTA4 Native RecordNativeFrame");
   BeginBulbFrame(submitted_frame);
   BeginFireFrame(command_buffer, submitted_frame);
@@ -36674,7 +36691,7 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
           const uint64_t source_indices = command.index_buffer->payload.size() /
               ((command.index_buffer->flags & kIndex32Flag) ? sizeof(uint32_t) :
                                                              sizeof(uint16_t));
-          sparse_allowed = REXCVAR_GET(gta4_native_merge_sparse_indexed_draws) &&
+          sparse_allowed = g925x_probe_sparse && REXCVAR_GET(gta4_native_merge_sparse_indexed_draws) &&
               !diagnostic_variants_enabled && !force_content_probe &&
               !collect_frame_diagnostics && !target.temporal_shader &&
               !command.light_trace_id && !command.temporal_composite_mode &&
@@ -36783,6 +36800,7 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
         sparse_indexed_range_count_ = 0;
         if (command_recorded) {
           merged_up_until = command_index + sparse_count;
+          g925x_sparse_draws_saved += uint32_t(sparse_count - 1);
           AddNativeGpuProfileCounter(performance::Counter::kSparseIndexedDrawsMerged,
                                      sparse_count - 1);
           if (NativeSparseTriangleBatchNeedsRebase(
