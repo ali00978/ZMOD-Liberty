@@ -30,7 +30,7 @@ require(libertyGpu == "adreno" || libertyGpu == "mali") {
 // the classic app's sandbox. Reuse the verified Armv9 Mali native libraries.
 val libertyEdition = (project.findProperty("libertyEdition") as String? ?: "classic").lowercase()
 require(libertyEdition == "classic" || libertyEdition == "g925native" || libertyEdition == "g925x") {
-    "-PlibertyEdition must be 'classic' or 'g925native'"
+    "-PlibertyEdition must be 'classic', 'g925native' or 'g925x'"
 }
 val g925NativeEdition = libertyEdition == "g925native"
 // New Android identity for the device-specific renderer laboratory.
@@ -72,13 +72,13 @@ android {
         targetSdk     = 35
         // Higher than every earlier build (upstream 0.5.9.3 and Mali alpha 1.4 are 18),
         // so it installs as an update over either.
-        versionCode   = 72
+        versionCode   = if (g925XEdition) 73 else 72
         // Shown as e.g. 0.5.9.3-mali-alpha-1.5. The workflow reads both the
         // base version and versionSuffix to name the APK.
         val versionSuffix = "-alpha-2.44-g925-rebased"
         versionName   = "0.5.9.3" + (if (libertyGpu == "mali") "-mali" else "") +
             versionSuffix + (if (g925NativeEdition) "-G925Native-v3.5" else "") +
-            (if (g925XEdition) "-G925X-v0.2" else "")
+            (if (g925XEdition) "-G925X-v0.3" else "")
 
         // Read by DriverBridge.defaultMode(): the driver used when driver.txt
         // does not exist yet.
