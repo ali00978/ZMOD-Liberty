@@ -72,7 +72,7 @@ android {
         versionCode   = 71
         // Shown as e.g. 0.5.9.3-mali-alpha-1.5. The workflow reads both the
         // base version and versionSuffix to name the APK.
-        val versionSuffix = "-alpha-2.42-g925-fullquality"
+        val versionSuffix = "-alpha-2.43-g925-fidelity"
         versionName   = "0.5.9.3" + (if (libertyGpu == "mali") "-mali" else "") +
             versionSuffix + (if (g925NativeEdition) "-G925Native-v3.3" else "")
 
