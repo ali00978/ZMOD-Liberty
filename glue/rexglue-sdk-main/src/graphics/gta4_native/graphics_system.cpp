@@ -364,6 +364,10 @@ REXCVAR_DEFINE_BOOL(gta4_native_merge_sparse_indexed_draws, true,
                     "GTA IV/Graphics/Native Renderer",
                     "Batch 2 tiny, 3 small or 4+ nonadjacent opaque triangle-list draws with identical state "
                     "as one indexed Vulkan draw using byte-identical index ranges");
+REXCVAR_DEFINE_BOOL(gta4_native_merge_rebased_indexed_draws, true,
+                    "GTA IV/Graphics/Native Renderer",
+                    "Merge otherwise identical opaque indexed triangle draws with differing base vertices "
+                    "by rebasing 16/32-bit indices exactly into one native Vulkan draw");
 REXCVAR_DEFINE_BOOL(gta4_native_merge_sequential_draws, true, "GTA IV/Graphics/Native Renderer",
                     "Merge consecutive nonindexed triangle-list draws that read exactly adjacent "
                     "vertex ranges with the same immutable shader, resources and render state");
@@ -24682,6 +24686,9 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
     return fail("command-state-or-index");
   }
   const bool sparse_batch = sparse_indexed_range_count_ >= 2;
+  const bool rebased_sparse_batch = sparse_batch &&
+      NativeSparseTriangleBatchNeedsRebase(
+          {sparse_indexed_ranges_.data(), sparse_indexed_range_count_});
   DrawIndexedPrimitiveCommand draw{};
   std::memcpy(&draw, command.bytes.data(), sizeof(draw));
   if (indexed_merge_count_override_ && !sparse_batch)
@@ -24780,17 +24787,30 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
         sparse_indexed_ranges_.data(), sparse_indexed_range_count_);
     const uint32_t total = NativeSparseTriangleIndexCount(
         ranges, command.index_buffer->payload.size() / element_size);
-    if (!total || !NativeSparseTriangleBatchHasGap(ranges))
+    if (!total || (!NativeSparseTriangleBatchHasGap(ranges) && !rebased_sparse_batch))
       return fail("sparse-index-range");
     NativeUploadAllocation batch{};
-    const VkDeviceSize bytes = VkDeviceSize(total) * element_size;
-    if (!AllocateUpload(bytes, VkDeviceSize(element_size), batch, NativeUploadKind::kIndex) ||
-        !profile::CpuCall(profile::CpuOp::kIndexConvert, [&] {
-          return WriteNativeSparseTriangleIndices(
-              cpu_indices(), ranges, index32, {batch.mapping, size_t(bytes)});
-        }))
-      return fail("sparse-index-upload");
-    // Preserve the original index words, triangle order and common baseVertex.
+    const VkDeviceSize output_element_size =
+        rebased_sparse_batch ? sizeof(uint32_t) : element_size;
+    const VkDeviceSize bytes = VkDeviceSize(total) * output_element_size;
+    if (!AllocateUpload(bytes, output_element_size, batch, NativeUploadKind::kIndex))
+      return fail("sparse-index-allocation");
+    // Every index is prevalidated before any writes. If any vertex offset is
+    // outside Vulkan's portable signed vertex-index range, the original
+    // non-batched draw is retried with its untouched guest baseVertex.
+    int32_t common_base_vertex = draw.base_vertex;
+    const bool copied = profile::CpuCall(profile::CpuOp::kIndexConvert, [&] {
+      if (rebased_sparse_batch)
+        return WriteNativeRebasedSparseTriangleIndices(
+            cpu_indices(), ranges, index32, {batch.mapping, size_t(bytes)},
+            &common_base_vertex);
+      return WriteNativeSparseTriangleIndices(
+          cpu_indices(), ranges, index32, {batch.mapping, size_t(bytes)});
+    });
+    if (!copied) return fail("sparse-index-rebase");
+    if (rebased_sparse_batch) draw.base_vertex = common_base_vertex;
+    // Every vertex fetch equals its original (guest index + original
+    // baseVertex); triangle order and all GPU shader/texture state stay fixed.
     selected_index_bytes = batch.mapping;
     host_index_count = total;
     host_start_index = 0;
@@ -25211,7 +25231,8 @@ bool Gta4NativeGraphicsSystem::RecordIndexedPrimitive(VkCommandBuffer command_bu
     }
   }
 
-  VkIndexType bound_index_type = index32 ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
+  VkIndexType bound_index_type =
+      (index32 || rebased_sparse_batch) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16;
   const bool moltenvk_strip_restart =
       vulkan_provider->vulkan_device()->properties().driverID == VK_DRIVER_ID_MOLTENVK && strip;
   if (moltenvk_strip_restart && !guest_restart_enabled) {
@@ -36669,7 +36690,8 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
               head.index_count <= kNativeSparseIndexBatchMaxIndices &&
               uint64_t(head.start_index) + head.index_count <= source_indices;
           if (sparse_allowed) {
-            sparse_indexed_ranges_[0] = {head.start_index, head.index_count};
+            sparse_indexed_ranges_[0] = {head.start_index, head.index_count,
+                                          head.base_vertex};
             sparse_count = 1;
             sparse_indices = head.index_count;
           }
@@ -36699,10 +36721,14 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
                             sizeof(command.fixed_function_state)) != 0) break;
             DrawIndexedPrimitiveCommand draw{};
             std::memcpy(&draw, other.bytes.data(), sizeof(draw));
-            if (draw.primitive_type != head.primitive_type ||
-                draw.base_vertex != head.base_vertex || !draw.index_count)
+            if (draw.primitive_type != head.primitive_type || !draw.index_count)
               break;
-            const bool adjacent = uint64_t(draw.start_index) == next_start;
+            const bool same_base = draw.base_vertex == head.base_vertex;
+            if (!same_base &&
+                (!sparse_allowed || !REXCVAR_GET(gta4_native_merge_rebased_indexed_draws)))
+              break;
+            const bool adjacent =
+                same_base && uint64_t(draw.start_index) == next_start;
             // Keep original contiguous merge semantics even if a candidate
             // is rejected for the stricter sparse path.
             if (sparse_allowed) {
@@ -36731,7 +36757,8 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
                 if (!adjacent) break;
               } else {
                 sparse_has_gap |= !adjacent;
-                sparse_indexed_ranges_[sparse_count++] = {draw.start_index, draw.index_count};
+                sparse_indexed_ranges_[sparse_count++] = {draw.start_index, draw.index_count,
+                                                          draw.base_vertex};
                 sparse_indices += draw.index_count;
               }
             }
