@@ -122,6 +122,17 @@ inline bool WriteNativeRebasedSparseTriangleIndices(
     return uint32_t(value);
   };
   for (const auto& range : ranges) {
+    // For an unsigned 16-bit index every possible source value is in
+    // [0, 65535]. If the entire interval is valid for this base, no
+    // per-index validation is needed. common_base is the minimum base,
+    // so rebased is nonnegative and fits uint32_t whenever effective
+    // fits int32_t (even with common_base == INT32_MIN).
+    // Negative or near-overflow bases and all 32-bit sources still use
+    // the original all-or-nothing validation before any destination write.
+    if (!source_is_32bit && range.base_vertex >= 0 &&
+        range.base_vertex <= std::numeric_limits<int32_t>::max() -
+                                 int32_t(std::numeric_limits<uint16_t>::max()))
+      continue;
     for (uint32_t i = 0; i < range.count; ++i) {
       const int64_t effective = int64_t(read_index(size_t(range.first) + i)) +
                                 int64_t(range.base_vertex);

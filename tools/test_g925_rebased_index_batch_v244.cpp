@@ -153,7 +153,59 @@ static void InvalidRejectsWithoutWrites() {
   for (size_t i = 3; i < 6; ++i) assert(output[i] == guest[i] + 2);
 }
 
+// Boundary and fallback coverage for the interval-proven 16-bit fast path.
+static void Fast16BitBoundaries() {
+  const std::array<uint16_t, 6> guest = {0, 1, 65535, 0, 1, 65535};
+  const auto source = std::span<const uint8_t>(
+      reinterpret_cast<const uint8_t*>(guest.data()), guest.size() * 2);
+  std::array<uint32_t, 7> output{};
+  auto run = [&](int32_t first_base, int32_t second_base, bool expected) {
+    const std::array<NativeSparseIndexRange, 2> ranges{{
+        {0, 3, first_base}, {3, 3, second_base}
+    }};
+    output.fill(0xDEADBEEFu);
+    int32_t common = 456;
+    const bool ok = WriteNativeRebasedSparseTriangleIndices(
+        source, ranges, false,
+        {reinterpret_cast<uint8_t*>(output.data()), 6 * 4}, &common);
+    assert(ok == expected);
+    assert(output[6] == 0xDEADBEEFu);
+    if (!ok) {
+      assert(common == 456);
+      for (const auto value : output) assert(value == 0xDEADBEEFu);
+      return;
+    }
+    assert(common == std::min(first_base, second_base));
+    for (size_t i = 0; i < 6; ++i) {
+      const int64_t expected_vertex = int64_t(guest[i]) +
+                                      (i < 3 ? first_base : second_base);
+      assert(int64_t(output[i]) + common == expected_vertex);
+    }
+  };
+  constexpr int32_t upper = INT32_MAX - 65535;
+  run(0, 1, true);
+  run(upper, 0, true);
+  run(0, upper, true);
+  run(0, upper + 1, false);  // valid first range must not be written
+  run(upper + 1, 0, false);
+  run(0, -1, false);
+  run(-1, 0, false);
+  run(0, INT32_MIN, false);
+  // Negative bases can also be valid: fallback must accept them if all
+  // effective vertices are nonnegative.
+  const std::array<uint16_t, 6> positive = {1, 2, 65535, 1, 2, 65535};
+  const std::array<NativeSparseIndexRange, 2> ranges{{{0, 3, -1}, {3, 3, 0}}};
+  int32_t common = 456;
+  assert(WriteNativeRebasedSparseTriangleIndices(
+      {reinterpret_cast<const uint8_t*>(positive.data()), positive.size() * 2},
+      ranges, false, {reinterpret_cast<uint8_t*>(output.data()), 6 * 4}, &common));
+  assert(common == -1);
+  for (size_t i = 0; i < 6; ++i)
+    assert(int64_t(output[i]) + common == int64_t(positive[i]) + (i < 3 ? -1 : 0));
+}
+
 int main() {
+  Fast16BitBoundaries();
   FuzzRebasedVertices<uint16_t>(0x9251624u);
   FuzzRebasedVertices<uint32_t>(0x9253224u);
   InvalidRejectsWithoutWrites();

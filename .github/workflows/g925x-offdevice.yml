@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [feature/g925-v244-rebased-index-batching]
   push:
-    branches: [feature/g925x-device-engine-lab-v1]
+    branches: [feature/g925x-device-engine-lab-v1, feature/g925x-index-fastpath-v04]
   workflow_dispatch:
 
 permissions:

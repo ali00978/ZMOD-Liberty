@@ -19,7 +19,7 @@ for needle in (
     '"com.zmodliberty.g925x"',
     '"ZMOD G925 X Lab"',
     'versionCode   = 72',
-    'if (g925XEdition) versionCode = 73',
+    'if (g925XEdition) versionCode = 74',
     'buildConfigField("boolean", "G925_X_EDITION", g925XEdition.toString())',
 ):
     assert needle in gradle, needle
@@ -28,7 +28,7 @@ assert 'G925NativeDefaults.apply(arguments, BuildConfig.G925_X_EDITION)' in acti
 assert workflow.count("Package independent G925 X APK") == 2, "Both CI paths must package X"
 assert workflow.count("Upload independent G925 X APK") == 2, "Both CI paths must publish X"
 assert workflow.count("LIBERTY_EDITION=g925x bash") == 2
-assert 'ZMOD-G925-X-Lab-v0.3.0-armv9.apk' in workflow
+assert 'ZMOD-G925-X-Lab-v0.4.0-armv9.apk' in workflow
 assert "package: name='com.zmodliberty.g925x'" in workflow
 
 javac = os.getenv("G925_TEST_JAVAC") or shutil.which("javac")
