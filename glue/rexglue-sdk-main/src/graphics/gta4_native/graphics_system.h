@@ -1531,9 +1531,6 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
   // No command or guest buffer is mutated, and the count is cleared before retry.
   std::array<NativeSparseIndexRange, kNativeSparseIndexBatchMaxDraws> sparse_indexed_ranges_{};
   uint32_t sparse_indexed_range_count_ = 0;
-  // True only while one offset-rebased sparse batch is being emitted.
-  // Used to switch the generated index buffer to VK_INDEX_TYPE_UINT32.
-  bool sparse_indexed_rebased_ = false;
   // Original vertex count is immutable; normal DrawPrimitive recording may
   // consume an exact adjacent triangle-list run when this is nonzero.
   uint32_t primitive_merge_count_override_ = 0;
