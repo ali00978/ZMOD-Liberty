@@ -76,9 +76,9 @@ android {
         // Shown as e.g. 0.5.9.3-mali-alpha-1.5. The workflow reads both the
         // base version and versionSuffix to name the APK.
         val versionSuffix = "-alpha-2.44-g925-rebased"
-        versionName   = if (g925XEdition) "0.1.0-poco-g925x-engine-lab" else
-            "0.5.9.3" + (if (libertyGpu == "mali") "-mali" else "") +
-            versionSuffix + (if (g925NativeEdition) "-G925Native-v3.5" else "")
+        versionName   = "0.5.9.3" + (if (libertyGpu == "mali") "-mali" else "") +
+            versionSuffix + (if (g925NativeEdition) "-G925Native-v3.5" else "") +
+            (if (g925XEdition) "-G925X-v0.2" else "")
 
         // Read by DriverBridge.defaultMode(): the driver used when driver.txt
         // does not exist yet.
