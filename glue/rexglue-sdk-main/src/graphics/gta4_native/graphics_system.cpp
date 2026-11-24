@@ -36785,6 +36785,11 @@ bool Gta4NativeGraphicsSystem::RecordNativeFrame(
           merged_up_until = command_index + sparse_count;
           AddNativeGpuProfileCounter(performance::Counter::kSparseIndexedDrawsMerged,
                                      sparse_count - 1);
+          if (NativeSparseTriangleBatchNeedsRebase(
+                  {sparse_indexed_ranges_.data(), sparse_count})) {
+            AddNativeGpuProfileCounter(performance::Counter::kRebasedIndexedDrawsMerged,
+                                       sparse_count - 1);
+          }
           g_indexed_draws_merged.fetch_add(sparse_count - 1, std::memory_order_relaxed);
         } else {
           // Upload/capacity failure restores the untouched first original
