@@ -477,6 +477,18 @@ public class LauncherActivity extends Activity {
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(22), dp(18), dp(22), dp(18));
         panel.addView(heading("ABOUT", 24));
+        if (BuildConfig.G925_X_EDITION) {
+            String soc = android.os.Build.VERSION.SDK_INT >= 31
+                    ? android.os.Build.SOC_MODEL : "";
+            panel.addView(text(G925XDeviceProfile.describe(
+                    android.os.Build.MANUFACTURER, android.os.Build.MODEL, soc),
+                    14, R.color.picker_muted), matchWrap(dp(12)));
+            panel.addView(text("G925 X is an experimental separate engine lab. "
+                    + "It checks the phone model; only benchmarks on a real "
+                    + "Immortalis-G925 can prove game FPS. Off-device regression "
+                    + "tests run automatically in GitHub Actions.",
+                    12, R.color.picker_muted), matchWrap(dp(12)));
+        }
         panel.addView(text(versionLine(), 14, R.color.picker_text), matchWrap(dp(8)));
         panel.addView(text("GTA IV (Xbox 360) running natively through static recompilation, "
                 + "on the phone's own Mali Vulkan driver. Liberty Recompiled team and ReXGlue "
@@ -641,7 +653,7 @@ public class LauncherActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView edition = new TextView(this);
-        edition.setText(BuildConfig.G925_NATIVE_EDITION ? "G925 Native" : "Mali Edition");
+        edition.setText(BuildConfig.G925_X_EDITION ? "G925 X Lab" : (BuildConfig.G925_NATIVE_EDITION ? "G925 Native" : "Mali Edition"));
         edition.setTextColor(0xF0FFFFFF);
         edition.setIncludeFontPadding(false);
         edition.setSingleLine(true);
