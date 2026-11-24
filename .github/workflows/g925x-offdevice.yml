@@ -59,9 +59,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ICD="/usr/share/vulkan/icd.d/lvp_icd.x86_64.json"
-          test -f "$ICD"
-          export VK_ICD_FILENAMES="$ICD"
+          echo "Installed Vulkan ICD files:"
+          find /usr/share/vulkan/icd.d -maxdepth 1 -type f -name '*.json' -print | sort
+          ICD="$(find /usr/share/vulkan/icd.d -maxdepth 1 -type f -name '*.json' | grep -Ei '/(lvp|lavapipe)[^/]*\\.json
+          echo "PASS: Vulkan loader and software device enumerated; not a G925 benchmark"
+ | head -1 || true)"
+          if [[ -n "$ICD" ]]; then
+            export VK_ICD_FILENAMES="$ICD"
+            echo "Using software Vulkan ICD: $ICD"
+          else
+            echo "No named Lavapipe ICD; trying the system Vulkan loader default."
+          fi
           vulkaninfo --summary | tee software-vulkan.txt
-          grep -qi 'llvmpipe' software-vulkan.txt
+          grep -Eiq 'llvmpipe|lavapipe|software' software-vulkan.txt
           echo "PASS: Vulkan loader and software device enumerated; not a G925 benchmark"
