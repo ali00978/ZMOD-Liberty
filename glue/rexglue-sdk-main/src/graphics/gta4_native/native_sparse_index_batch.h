@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <span>
 
 namespace rex::graphics::gta4_native {
@@ -14,6 +15,9 @@ namespace rex::graphics::gta4_native {
 struct NativeSparseIndexRange {
   uint32_t first = 0;
   uint32_t count = 0;
+  // Original vkCmdDrawIndexed vertexOffset. Consecutive draws with different
+  // offsets can only be merged after every index is rebased losslessly.
+  int32_t base_vertex = 0;
 };
 
 inline constexpr uint32_t kNativeSparseIndexBatchMaxIndices = 65536;
@@ -62,6 +66,85 @@ constexpr bool NativeSparseTriangleBatchHasGap(
       return true;
   }
   return false;
+}
+
+// A physical index gap is not necessary when consecutive guest draws used
+// different vertex offsets: their index words must first be converted.  The
+// original copy-only path remains byte-identical for common-offset draws.
+constexpr bool NativeSparseTriangleBatchNeedsRebase(
+    std::span<const NativeSparseIndexRange> ranges) {
+  if (ranges.empty()) return false;
+  for (size_t i = 1; i < ranges.size(); ++i)
+    if (ranges[i].base_vertex != ranges.front().base_vertex) return true;
+  return false;
+}
+
+// Conservative, exact vertex re-basing for an opaque triangle-list run:
+//
+// Original draw n: vertex = guest_index + original_base[n].
+// Batched draw:   vertex = uint32_index + minimum_original_base.
+//
+// To ensure equal vertex fetches with a single Vulkan indexed draw, reject
+// negative/out-of-range effective vertices, integer overflow, malformed ranges
+// and unsupported destination sizes *before writing any output*.  Output is
+// always UINT32 indices; it never aliases the guest's index buffer.
+//
+// The caller MUST separately verify identical immutable shader/pipeline,
+// descriptors, raster state, vertex streams, texture sources, constants,
+// render target, no blending/stencil/query side effects, and that the shader
+// does not use SV_VertexID. This helper does not replace those safety gates.
+inline bool WriteNativeRebasedSparseTriangleIndices(
+    std::span<const uint8_t> source,
+    std::span<const NativeSparseIndexRange> ranges,
+    bool source_is_32bit,
+    std::span<uint8_t> destination,
+    int32_t* output_base_vertex) {
+  const size_t input_stride = source_is_32bit ? sizeof(uint32_t) : sizeof(uint16_t);
+  const uint32_t total = NativeSparseTriangleIndexCount(ranges, source.size() / input_stride);
+  if (!output_base_vertex || !total || !NativeSparseTriangleBatchNeedsRebase(ranges) ||
+      destination.size() < size_t(total) * sizeof(uint32_t))
+    return false;
+  int32_t common_base = ranges.front().base_vertex;
+  for (const auto& range : ranges)
+    if (range.base_vertex < common_base) common_base = range.base_vertex;
+
+  // First pass prevalidates all effective vertex IDs and the output index
+  // width. No allocations, no writes, and no changes to the original buffer.
+  const auto read_index = [&](size_t index) {
+    const uint8_t* bytes = source.data() + index * input_stride;
+    if (source_is_32bit) {
+      uint32_t value;
+      std::memcpy(&value, bytes, sizeof(value));
+      return value;
+    }
+    uint16_t value;
+    std::memcpy(&value, bytes, sizeof(value));
+    return uint32_t(value);
+  };
+  for (const auto& range : ranges) {
+    for (uint32_t i = 0; i < range.count; ++i) {
+      const int64_t effective = int64_t(read_index(size_t(range.first) + i)) +
+                                int64_t(range.base_vertex);
+      const int64_t rebased = effective - int64_t(common_base);
+      if (effective < 0 ||
+          effective > std::numeric_limits<int32_t>::max() ||
+          rebased < 0 || rebased > std::numeric_limits<uint32_t>::max())
+        return false;
+    }
+  }
+
+  size_t written = 0;
+  for (const auto& range : ranges) {
+    for (uint32_t i = 0; i < range.count; ++i) {
+      const int64_t effective = int64_t(read_index(size_t(range.first) + i)) +
+                                int64_t(range.base_vertex);
+      const uint32_t index = uint32_t(effective - int64_t(common_base));
+      std::memcpy(destination.data() + written * sizeof(index), &index, sizeof(index));
+      ++written;
+    }
+  }
+  *output_base_vertex = common_base;
+  return written == total;
 }
 
 // Two-stage validation: malformed batches cannot partially overwrite an upload.
