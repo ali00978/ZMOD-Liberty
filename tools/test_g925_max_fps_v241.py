@@ -94,9 +94,9 @@ assert 'saveSettings(false)' not in visual
 assert 'button("RESTORE FULL DRAW DISTANCE + REFLECTIONS", true)' in launcher
 assert 'restoreVisuals.setOnClickListener(v -> restoreG925FullGraphics())' in launcher
 
-assert "versionCode   = 71" in gradle
-assert "-alpha-2.43-g925-fidelity" in gradle
-assert 'ZMOD-Liberty-G925-Native-v3.4-armv9.apk' in workflow
+assert "versionCode   = 72" in gradle
+assert "-alpha-2.44-g925-rebased" in gradle
+assert 'ZMOD-Liberty-G925-Native-v3.5-armv9.apk' in workflow
 assert "python tools/test_g925_max_fps_v241.py" in workflow
 
 # Compile a real Java regression for duplicate CPU options and preservation of
