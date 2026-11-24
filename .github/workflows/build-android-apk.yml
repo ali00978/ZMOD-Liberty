@@ -181,6 +181,7 @@ jobs:
           python tools/test_g925_role_aware_surface_v235.py
           python tools/test_g925_indexed_batch_coverage_v236.py
           python tools/test_g925_rebased_index_batch_v244.py
+          python tools/test_g925x_adaptive_sparse.py
           python tools/test_g925_present_overlap_v212.py
           python tools/test_g925_profile_report_v27.py
 
@@ -354,14 +355,14 @@ jobs:
           APK="os/android/app/build/outputs/apk/debug/app-debug.apk"
           AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt.exe"
           "$AAPT" dump badging "$APK" | grep -F "package: name='com.zmodliberty.g925x'"
-          cp "$APK" ZMOD-G925-X-Lab-v0.1.0-armv9.apk
+          cp "$APK" ZMOD-G925-X-Lab-v0.2.0-armv9.apk
 
       - name: Upload independent G925 X APK
         if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
         uses: actions/upload-artifact@v4
         with:
-          name: ZMOD-G925-X-Lab-v0.1.0-armv9.apk
-          path: ZMOD-G925-X-Lab-v0.1.0-armv9.apk
+          name: ZMOD-G925-X-Lab-v0.2.0-armv9.apk
+          path: ZMOD-G925-X-Lab-v0.2.0-armv9.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -514,14 +515,14 @@ jobs:
           APK="os/android/app/build/outputs/apk/debug/app-debug.apk"
           AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt.exe"
           "$AAPT" dump badging "$APK" | grep -F "package: name='com.zmodliberty.g925x'"
-          cp "$APK" ZMOD-G925-X-Lab-v0.1.0-armv9.apk
+          cp "$APK" ZMOD-G925-X-Lab-v0.2.0-armv9.apk
 
       - name: Upload independent G925 X APK
         if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
         uses: actions/upload-artifact@v4
         with:
-          name: ZMOD-G925-X-Lab-v0.1.0-armv9.apk
-          path: ZMOD-G925-X-Lab-v0.1.0-armv9.apk
+          name: ZMOD-G925-X-Lab-v0.2.0-armv9.apk
+          path: ZMOD-G925-X-Lab-v0.2.0-armv9.apk
           if-no-files-found: error
           retention-days: 30
 
