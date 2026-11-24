@@ -74,7 +74,7 @@ android {
         // base version and versionSuffix to name the APK.
         val versionSuffix = "-alpha-2.43-g925-fidelity"
         versionName   = "0.5.9.3" + (if (libertyGpu == "mali") "-mali" else "") +
-            versionSuffix + (if (g925NativeEdition) "-G925Native-v3.3" else "")
+            versionSuffix + (if (g925NativeEdition) "-G925Native-v3.4" else "")
 
         // Read by DriverBridge.defaultMode(): the driver used when driver.txt
         // does not exist yet.
