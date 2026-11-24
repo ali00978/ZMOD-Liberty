@@ -45,7 +45,44 @@ public final class G925FullQualityCvarMergeTest {
         }
         String second = G925FullQualityCvarMerge.merge(List.of(output.split("\n")), cvars);
         check(second.equals(output), "not idempotent");
-        System.out.println("PASS: full-quality CPU cvar merge keeps all visual settings");
+        String[][] recoverQuality = {
+                {"gta4_dynamic_draw_distance", "false"},
+                {"gta4_draw_distance_scale", "1.0"},
+                {"gta4_fps_guard", "0"}
+        };
+        List<String> degraded = List.of(
+                "# Preserve custom visual and performance options",
+                "--gta4_dynamic_draw_distance=true",
+                "--gta4_draw_distance_scale=0.6",
+                "--gta4_fps_guard=2",
+                "--gta4_fps_guard=3",
+                "--gta4_output_height_cap=1080",
+                "--gta4_native_anti_aliasing=smaa",
+                "--gta4_shadow_map_base_size=512",
+                "--gta4_traffic_density_scale=1.0",
+                "--gta4_extra_frames_in_flight=4",
+                "--gta4_dynamic_draw_distance_min=0.80",
+                "--custom_visual_quality=ultra",
+                "--gta4_fps_guard_extra=do_not_touch");
+        String recovered = G925FullQualityCvarMerge.merge(degraded, recoverQuality);
+        for (String[] restored : recoverQuality) {
+            String line = "--" + restored[0] + "=" + restored[1] + "\n";
+            check(recovered.contains(line), "missing restored visual cvar: " + line);
+            check(recovered.indexOf(line) == recovered.lastIndexOf(line), "duplicate: " + line);
+        }
+        for (String previous : List.of(
+                "--gta4_dynamic_draw_distance=true",
+                "--gta4_draw_distance_scale=0.6",
+                "--gta4_fps_guard=2",
+                "--gta4_fps_guard=3"))
+            check(!recovered.contains(previous + "\n"), "degraded visual remains: " + previous);
+        for (String unchanged : degraded.subList(5, degraded.size()))
+            check(recovered.contains(unchanged + "\n"), "user choice lost: " + unchanged);
+        check(recovered.contains("# Preserve custom visual and performance options\n"),
+                "comment lost");
+        check(recovered.equals(G925FullQualityCvarMerge.merge(
+                List.of(recovered.split("\n")), recoverQuality)), "visual restore not idempotent");
+        System.out.println("PASS: CPU boost and explicit visual restore preserve every other option");
     }
 
     private static void check(boolean result, String message) {
