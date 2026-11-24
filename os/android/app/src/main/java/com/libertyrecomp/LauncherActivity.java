@@ -483,7 +483,7 @@ public class LauncherActivity extends Activity {
             panel.addView(text(G925XDeviceProfile.describe(
                     android.os.Build.MANUFACTURER, android.os.Build.MODEL, soc),
                     14, R.color.picker_muted), matchWrap(dp(12)));
-            panel.addView(text("G925 X is an experimental separate engine lab. "
+            panel.addView(text("G925 X has a lossless adaptive native CPU draw scheduler. "
                     + "It checks the phone model; only benchmarks on a real "
                     + "Immortalis-G925 can prove game FPS. Off-device regression "
                     + "tests run automatically in GitHub Actions.",
