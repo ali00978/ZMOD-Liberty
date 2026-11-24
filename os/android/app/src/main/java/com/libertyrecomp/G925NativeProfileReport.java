@@ -57,6 +57,7 @@ final class G925NativeProfileReport {
         {"gta4_frame_limit", "Launcher frame cap"},
         {"gta4_extra_frames_in_flight", "Additional guest run-ahead frames"},
         {"gta4_native_merge_rebased_indexed_draws", "Lossless indexed draw batching"},
+        {"gta4_native_g925x_adaptive_sparse", "G925 X adaptive sparse CPU scheduling"},
         {"gta4_native_max_queued_frames", "Native guest frame queue limit"},
         {"gta4_output_height_cap", "Launcher output height"},
         {"gta4_native_anti_aliasing", "Launcher anti-aliasing"},
