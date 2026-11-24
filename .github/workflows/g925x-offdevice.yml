@@ -1,0 +1,67 @@
+name: G925 X off-device engine regression lab
+
+# Runs without a phone. Correctness and software Vulkan API smoke tests only.
+# No CI host or software Vulkan renderer can prove Mali-G925 mobile frame rate.
+on:
+  pull_request:
+    branches: [feature/g925-v244-rebased-index-batching]
+  push:
+    branches: [feature/g925x-device-engine-lab-v1]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: g925x-lab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-cpu-replay:
+    name: C++ guest-index replay + POCO device policy + host benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify compiler toolchain
+        run: |
+          clang++ --version
+          javac -version
+      - name: Run exact 16/32-bit renderer rebase replay (C++)
+        env:
+          G925_TEST_CXX: clang++
+        run: python tools/test_g925_rebased_index_batch_v244.py
+      - name: Verify G925 X Android identity, POCO hardware detection, host CPU index benchmark
+        env:
+          G925_TEST_CXX: clang++
+          G925X_BENCHMARK: '1'
+        run: python tools/test_g925x_lab.py
+
+  software-vulkan:
+    name: Vulkan loader smoke (Mesa lavapipe; NOT phone GPU FPS)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Install software Vulkan
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libvulkan1 vulkan-tools mesa-vulkan-drivers
+      - name: Enumerate the software Vulkan device
+        shell: bash
+        run: |
+          set -euo pipefail
+          ICD="/usr/share/vulkan/icd.d/lvp_icd.x86_64.json"
+          test -f "$ICD"
+          export VK_ICD_FILENAMES="$ICD"
+          vulkaninfo --summary | tee software-vulkan.txt
+          grep -qi 'llvmpipe' software-vulkan.txt
+          echo "PASS: Vulkan loader and software device enumerated; not a G925 benchmark"
