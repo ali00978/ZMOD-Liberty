@@ -160,6 +160,7 @@ enum class Counter : uint8_t {
   kRectangleDrawsMerged,
   kSequentialDrawsMerged,
   kSparseIndexedDrawsMerged,
+  kRebasedIndexedDrawsMerged,
   kCount,
 };
 
