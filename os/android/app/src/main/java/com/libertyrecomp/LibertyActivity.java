@@ -325,6 +325,7 @@ public class LibertyActivity extends SDLActivity {
         G925NativeDefaults.apply(arguments, BuildConfig.G925_NATIVE_EDITION);
         // Dedicated X device-lab package gets the same lossless ADPF defaults.
         G925NativeDefaults.apply(arguments, BuildConfig.G925_X_EDITION);
+        G925XNativeDefaults.apply(arguments, BuildConfig.G925_X_EDITION);
         applyPerformanceTestArguments(arguments);
         mDebugLog = getIntent() != null && getIntent().getBooleanExtra(EXTRA_DEBUG_LOG, false);
         if (mDebugLog) {
