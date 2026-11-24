@@ -18,6 +18,8 @@ for needle in (
     'val g925XEdition = libertyEdition == "g925x"',
     '"com.zmodliberty.g925x"',
     '"ZMOD G925 X Lab"',
+    'versionCode   = 72',
+    'if (g925XEdition) versionCode = 73',
     'buildConfigField("boolean", "G925_X_EDITION", g925XEdition.toString())',
 ):
     assert needle in gradle, needle

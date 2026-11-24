@@ -143,6 +143,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Test standalone G925 Native package and startup defaults
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        run: python tools/test_g925_native_app_v1.py
+
+      - name: Test G925 X hardware targeting and off-device Java regressions
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        run: python tools/test_g925x_lab.py
+
       - name: Select host C++ toolchain for executable regressions
         uses: ilammy/msvc-dev-cmd@v1
 
@@ -318,10 +326,6 @@ jobs:
           retention-days: 30
       # Same verified Armv9/Mali engine, but a distinct application ID and
       # sandbox: users can install the G925 Native prototype beside classic.
-      - name: Test standalone G925 Native package and startup defaults
-        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
-        run: python tools/test_g925_native_app_v1.py
-
       - name: Package independent G925 Native APK
         if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
         run: |
@@ -341,10 +345,6 @@ jobs:
           path: ZMOD-Liberty-G925-Native-v3.5-armv9.apk
           if-no-files-found: error
           retention-days: 30
-
-      - name: Test G925 X hardware targeting and off-device Java regressions
-        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
-        run: python tools/test_g925x_lab.py
 
       - name: Package independent G925 X APK
         if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
@@ -431,6 +431,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Test standalone G925 Native package and startup defaults
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        run: python tools/test_g925_native_app_v1.py
+
+      - name: Test G925 X hardware targeting and off-device Java regressions
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        run: python tools/test_g925x_lab.py
+
       - name: Install Android SDK packaging dependencies
         run: |
           SDKMANAGER="$(cygpath -u "$ANDROID_HOME")/cmdline-tools/latest/bin/sdkmanager.bat"
@@ -478,10 +486,6 @@ jobs:
           retention-days: 30
       # Same verified Armv9/Mali engine, but a distinct application ID and
       # sandbox: users can install the G925 Native prototype beside classic.
-      - name: Test standalone G925 Native package and startup defaults
-        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
-        run: python tools/test_g925_native_app_v1.py
-
       - name: Package independent G925 Native APK
         if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
         run: |
@@ -501,10 +505,6 @@ jobs:
           path: ZMOD-Liberty-G925-Native-v3.5-armv9.apk
           if-no-files-found: error
           retention-days: 30
-
-      - name: Test G925 X hardware targeting and off-device Java regressions
-        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
-        run: python tools/test_g925x_lab.py
 
       - name: Package independent G925 X APK
         if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}

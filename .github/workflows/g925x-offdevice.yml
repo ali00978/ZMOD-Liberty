@@ -36,6 +36,10 @@ jobs:
         run: |
           clang++ --version
           javac -version
+      - name: Verify shared edition metadata and legacy startup checks
+        run: |
+          python tools/test_g925_official_clean.py
+          python tools/test_g925_native_app_v1.py
       - name: Run exact 16/32-bit renderer rebase replay (C++)
         env:
           G925_TEST_CXX: clang++
