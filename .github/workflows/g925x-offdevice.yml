@@ -40,6 +40,10 @@ jobs:
         env:
           G925_TEST_CXX: clang++
         run: python tools/test_g925_rebased_index_batch_v244.py
+      - name: Replay G925 X adaptive native CPU scheduling (and full-quality Android defaults)
+        env:
+          G925_TEST_CXX: clang++
+        run: python tools/test_g925x_adaptive_sparse.py
       - name: Verify G925 X Android identity, POCO hardware detection, host CPU index benchmark
         env:
           G925_TEST_CXX: clang++
