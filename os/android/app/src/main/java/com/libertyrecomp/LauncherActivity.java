@@ -1125,6 +1125,12 @@ public class LauncherActivity extends Activity {
                     new String[] {"gta4_reflection_aa"},
                     new String[] {"Default", "Off", "Original"},
                     new String[] {"off", "original"}),
+            new GraphicsSetting("Indexed draw batching",
+                    "G925 Native: merge more identical opaque 3D draws into one Vulkan call "
+                            + "without changing image quality. Off is for same-scene FPS comparison.",
+                    new String[] {"gta4_native_merge_rebased_indexed_draws"},
+                    new String[] {"Default (On)", "On (new G925 boost)", "Off (A/B compare)"},
+                    new String[] {"true", "false"}),
             new GraphicsSetting("Run-ahead frames",
                     "1-frame low-latency default; 4 may improve throughput but delays controls",
                     new String[] {"gta4_extra_frames_in_flight"},
@@ -1374,6 +1380,7 @@ public class LauncherActivity extends Activity {
             case "Draw distance":
             case "Population density":
             case "Run-ahead frames":
+            case "Indexed draw batching":
             case "CPU boost":
             case "CPU response pacing":
             case "CPU hint thread stability":
