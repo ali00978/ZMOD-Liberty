@@ -24,7 +24,7 @@ on:
   # Build a child branch against the verified 2.6 base so GitHub permits
   # restoring that base branch's compiler cache (sibling push builds cannot).
   pull_request:
-    branches: [feature/g925-stable-16ms-v26, feature/g925-v239-steady40-native, feature/g925-v240-vertex-work-stability, feature/g925-v243-evidence-first-profiler]
+    branches: [feature/g925-stable-16ms-v26, feature/g925-v239-steady40-native, feature/g925-v240-vertex-work-stability, feature/g925-v243-evidence-first-profiler, feature/g925-v244-rebased-index-batching]
     types: [opened, synchronize, reopened]
     paths-ignore:
       - '**.md'
@@ -143,6 +143,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Test standalone G925 Native package and startup defaults
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        run: python tools/test_g925_native_app_v1.py
+
+      - name: Test G925 X hardware targeting and off-device Java regressions
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        run: python tools/test_g925x_lab.py
+
       - name: Select host C++ toolchain for executable regressions
         uses: ilammy/msvc-dev-cmd@v1
 
@@ -181,6 +189,7 @@ jobs:
           python tools/test_g925_role_aware_surface_v235.py
           python tools/test_g925_indexed_batch_coverage_v236.py
           python tools/test_g925_rebased_index_batch_v244.py
+          python tools/test_g925x_adaptive_sparse.py
           python tools/test_g925_present_overlap_v212.py
           python tools/test_g925_profile_report_v27.py
 
@@ -317,10 +326,6 @@ jobs:
           retention-days: 30
       # Same verified Armv9/Mali engine, but a distinct application ID and
       # sandbox: users can install the G925 Native prototype beside classic.
-      - name: Test standalone G925 Native package and startup defaults
-        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
-        run: python tools/test_g925_native_app_v1.py
-
       - name: Package independent G925 Native APK
         if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
         run: |
@@ -340,6 +345,27 @@ jobs:
           path: ZMOD-Liberty-G925-Native-v3.5-armv9.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Package independent G925 X APK
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        run: |
+          export ANDROID_HOME="$(cygpath -u "$ANDROID_HOME")"
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          LIBERTY_EDITION=g925x bash os/android/scripts/build_apk.sh debug
+          APK="os/android/app/build/outputs/apk/debug/app-debug.apk"
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt.exe"
+          "$AAPT" dump badging "$APK" | grep -F "package: name='com.zmodliberty.g925x'"
+          cp "$APK" ZMOD-G925-X-Lab-v0.3.0-armv9.apk
+
+      - name: Upload independent G925 X APK
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZMOD-G925-X-Lab-v0.3.0-armv9.apk
+          path: ZMOD-G925-X-Lab-v0.3.0-armv9.apk
+          if-no-files-found: error
+          retention-days: 30
+
 
   fast-apk:
     needs: plan
@@ -405,6 +431,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Test standalone G925 Native package and startup defaults
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        run: python tools/test_g925_native_app_v1.py
+
+      - name: Test G925 X hardware targeting and off-device Java regressions
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        run: python tools/test_g925x_lab.py
+
       - name: Install Android SDK packaging dependencies
         run: |
           SDKMANAGER="$(cygpath -u "$ANDROID_HOME")/cmdline-tools/latest/bin/sdkmanager.bat"
@@ -452,10 +486,6 @@ jobs:
           retention-days: 30
       # Same verified Armv9/Mali engine, but a distinct application ID and
       # sandbox: users can install the G925 Native prototype beside classic.
-      - name: Test standalone G925 Native package and startup defaults
-        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
-        run: python tools/test_g925_native_app_v1.py
-
       - name: Package independent G925 Native APK
         if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
         run: |
@@ -475,3 +505,24 @@ jobs:
           path: ZMOD-Liberty-G925-Native-v3.5-armv9.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Package independent G925 X APK
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        run: |
+          export ANDROID_HOME="$(cygpath -u "$ANDROID_HOME")"
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          LIBERTY_EDITION=g925x bash os/android/scripts/build_apk.sh debug
+          APK="os/android/app/build/outputs/apk/debug/app-debug.apk"
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt.exe"
+          "$AAPT" dump badging "$APK" | grep -F "package: name='com.zmodliberty.g925x'"
+          cp "$APK" ZMOD-G925-X-Lab-v0.3.0-armv9.apk
+
+      - name: Upload independent G925 X APK
+        if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZMOD-G925-X-Lab-v0.3.0-armv9.apk
+          path: ZMOD-G925-X-Lab-v0.3.0-armv9.apk
+          if-no-files-found: error
+          retention-days: 30
+

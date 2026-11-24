@@ -16,7 +16,7 @@ workflow = (root / ".github/workflows/build-android-apk.yml").read_text(encoding
 script = (root / "os/android/scripts/build_apk.sh").read_text(encoding="utf-8")
 
 for fragment in (
-    'applicationId = if (g925NativeEdition) "com.zmodliberty.g925native" else "com.libertyrecomp"',
+    'applicationId = if (g925XEdition) "com.zmodliberty.g925x" else if (g925NativeEdition) "com.zmodliberty.g925native" else "com.libertyrecomp"',
     '"-PlibertyEdition must be',
     'val g925NativeEdition = libertyEdition == "g925native"',
     'buildConfigField("boolean", "G925_NATIVE_EDITION", g925NativeEdition.toString())',

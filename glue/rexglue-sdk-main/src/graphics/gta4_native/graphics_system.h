@@ -69,6 +69,7 @@
 #include "native_draw_preparation.h"
 #include "native_frame_context.h"
 #include "native_frame_scheduling.h"
+#include "native_g925x_adaptive_sparse.h"
 #include "native_gpu_attribution.h"
 #include <rex/graphics/gta4_native/gpu_pass_origin.h>
 #include "native_host_enhancement_policy.h"
@@ -1531,6 +1532,8 @@ class Gta4NativeGraphicsSystem final : public system::IGraphicsSystem {
   // No command or guest buffer is mutated, and the count is cleared before retry.
   std::array<NativeSparseIndexRange, kNativeSparseIndexBatchMaxDraws> sparse_indexed_ranges_{};
   uint32_t sparse_indexed_range_count_ = 0;
+  // X-edition recorder path: skip speculative sparse merge scans when probes prove no gain.
+  NativeG925XAdaptiveSparse g925x_sparse_policy_{};
   // Original vertex count is immutable; normal DrawPrimitive recording may
   // consume an exact adjacent triangle-list run when this is nonzero.
   uint32_t primitive_merge_count_override_ = 0;

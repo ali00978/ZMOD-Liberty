@@ -323,6 +323,9 @@ public class LibertyActivity extends SDLActivity {
         // Edition-specific performance hints; user choices from files above
         // remain authoritative. No resolution or game-quality changes.
         G925NativeDefaults.apply(arguments, BuildConfig.G925_NATIVE_EDITION);
+        // Dedicated X device-lab package gets the same lossless ADPF defaults.
+        G925NativeDefaults.apply(arguments, BuildConfig.G925_X_EDITION);
+        G925XNativeDefaults.apply(arguments, BuildConfig.G925_X_EDITION);
         applyPerformanceTestArguments(arguments);
         mDebugLog = getIntent() != null && getIntent().getBooleanExtra(EXTRA_DEBUG_LOG, false);
         if (mDebugLog) {
