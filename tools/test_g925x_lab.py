@@ -26,7 +26,7 @@ assert 'G925NativeDefaults.apply(arguments, BuildConfig.G925_X_EDITION)' in acti
 assert workflow.count("Package independent G925 X APK") == 2, "Both CI paths must package X"
 assert workflow.count("Upload independent G925 X APK") == 2, "Both CI paths must publish X"
 assert workflow.count("LIBERTY_EDITION=g925x bash") == 2
-assert 'ZMOD-G925-X-Lab-v0.1.0-armv9.apk' in workflow
+assert 'ZMOD-G925-X-Lab-v0.2.0-armv9.apk' in workflow
 assert "package: name='com.zmodliberty.g925x'" in workflow
 
 javac = os.getenv("G925_TEST_JAVAC") or shutil.which("javac")
