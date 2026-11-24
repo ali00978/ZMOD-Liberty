@@ -29,11 +29,14 @@ require(libertyGpu == "adreno" || libertyGpu == "mali") {
 // Dedicated independently installable package, never overwriting or reading
 // the classic app's sandbox. Reuse the verified Armv9 Mali native libraries.
 val libertyEdition = (project.findProperty("libertyEdition") as String? ?: "classic").lowercase()
-require(libertyEdition == "classic" || libertyEdition == "g925native") {
+require(libertyEdition == "classic" || libertyEdition == "g925native" || libertyEdition == "g925x") {
     "-PlibertyEdition must be 'classic' or 'g925native'"
 }
 val g925NativeEdition = libertyEdition == "g925native"
-require(!g925NativeEdition || libertyGpu == "mali") {
+// New Android identity for the device-specific renderer laboratory.
+// It never modifies the installed Native v3.5 or classic app.
+val g925XEdition = libertyEdition == "g925x"
+require((!g925NativeEdition && !g925XEdition) || libertyGpu == "mali") {
     "G925 Native requires the system Mali Vulkan build"
 }
 
@@ -59,21 +62,22 @@ android {
     }
 
     defaultConfig {
-        applicationId = if (g925NativeEdition) "com.zmodliberty.g925native" else "com.libertyrecomp"
+        applicationId = if (g925XEdition) "com.zmodliberty.g925x" else if (g925NativeEdition) "com.zmodliberty.g925native" else "com.libertyrecomp"
         // Android launcher label is per package; the old installation keeps
         // its exact package name, signing key and config untouched.
-        manifestPlaceholders["libertyAppLabel"] = if (g925NativeEdition)
+        manifestPlaceholders["libertyAppLabel"] = if (g925XEdition) "ZMOD G925 X Lab" else if (g925NativeEdition)
             "ZMOD Liberty G925 Native" else "Liberty Recompiled"
         // 28: ASharedMemory (26) for guest memory and AAudio (27) for audio.
         minSdk        = 29
         targetSdk     = 35
         // Higher than every earlier build (upstream 0.5.9.3 and Mali alpha 1.4 are 18),
         // so it installs as an update over either.
-        versionCode   = 72
+        versionCode   = if (g925XEdition) 1 else 72
         // Shown as e.g. 0.5.9.3-mali-alpha-1.5. The workflow reads both the
         // base version and versionSuffix to name the APK.
         val versionSuffix = "-alpha-2.44-g925-rebased"
-        versionName   = "0.5.9.3" + (if (libertyGpu == "mali") "-mali" else "") +
+        versionName   = if (g925XEdition) "0.1.0-poco-g925x-engine-lab" else
+            "0.5.9.3" + (if (libertyGpu == "mali") "-mali" else "") +
             versionSuffix + (if (g925NativeEdition) "-G925Native-v3.5" else "")
 
         // Read by DriverBridge.defaultMode(): the driver used when driver.txt
@@ -82,6 +86,7 @@ android {
             if (libertyGpu == "mali") "\"system\"" else "\"turnip\"")
         buildConfigField("String", "GPU_FAMILY", "\"$libertyGpu\"")
         buildConfigField("boolean", "G925_NATIVE_EDITION", g925NativeEdition.toString())
+        buildConfigField("boolean", "G925_X_EDITION", g925XEdition.toString())
 
         ndk {
             abiFilters += listOf("arm64-v8a")
