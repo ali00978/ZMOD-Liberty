@@ -21,7 +21,7 @@ int main() {
   assert(passes == kFrames);
   // 8 probes, 48 skipped; a fresh probe phase every 56 frames.
   assert(probes == 80);
-  assert(policy.SkipRemaining() == 48);
+  assert(policy.SkipRemaining() == 0);  // 560 = 10 complete probe/skip cycles.
   // No render commands are discarded: scheduling controls optional
   // merge candidate search only; the original draw path always runs.
   uint64_t dispatched = 0;
