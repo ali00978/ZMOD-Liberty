@@ -4,6 +4,9 @@
 #include <cstdint>
 #include <cstring>
 #include <span>
+#if defined(__aarch64__) && defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 namespace rex::graphics::gta4_native {
 
@@ -93,7 +96,17 @@ inline bool WriteNativeConvertedIndices(std::span<const uint8_t> source,
     const uint8_t* src = source.data() + size_t(key.first) * element;
     uint8_t* dst = destination.data();
     if (key.index32) {
-      for (uint32_t i = 0; i < key.count; ++i) {
+      uint32_t i = 0;
+#if defined(__aarch64__) && defined(__ARM_NEON)
+      const uint32x4_t mask = vdupq_n_u32(key.index_mask);
+      const uint32x4_t marker = vdupq_n_u32(key.restart_index);
+      for (; key.count - i >= 4; i += 4) {
+        const uint32x4_t value = vreinterpretq_u32_u8(vld1q_u8(src + size_t(i) * 4));
+        const uint32x4_t matches = vceqq_u32(vandq_u32(value, mask), marker);
+        vst1q_u8(dst + size_t(i) * 4, vreinterpretq_u8_u32(vorrq_u32(value, matches)));
+      }
+#endif
+      for (; i < key.count; ++i) {
         uint32_t value;
         std::memcpy(&value, src + size_t(i) * sizeof(value), sizeof(value));
         if ((value & key.index_mask) == key.restart_index)
@@ -101,7 +114,16 @@ inline bool WriteNativeConvertedIndices(std::span<const uint8_t> source,
         std::memcpy(dst + size_t(i) * sizeof(value), &value, sizeof(value));
       }
     } else {
-      for (uint32_t i = 0; i < key.count; ++i) {
+      uint32_t i = 0;
+#if defined(__aarch64__) && defined(__ARM_NEON)
+      const uint16x8_t marker = vdupq_n_u16(static_cast<uint16_t>(key.restart_index));
+      for (; key.count - i >= 8; i += 8) {
+        const uint16x8_t value = vreinterpretq_u16_u8(vld1q_u8(src + size_t(i) * 2));
+        const uint16x8_t matches = vceqq_u16(value, marker);
+        vst1q_u8(dst + size_t(i) * 2, vreinterpretq_u8_u16(vorrq_u16(value, matches)));
+      }
+#endif
+      for (; i < key.count; ++i) {
         uint16_t value;
         std::memcpy(&value, src + size_t(i) * sizeof(value), sizeof(value));
         if (value == key.restart_index)

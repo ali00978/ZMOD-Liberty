@@ -73,6 +73,39 @@ class NativeConstantUploadTracker {
       }
     };
     size_t relative = 0;
+#if defined(__aarch64__)
+    // Compare converted registers directly in SIMD registers. Avoid the
+    // temporary 64-byte stack write and libc comparisons on the ARM recorder.
+    // A group of four unchanged registers needs only one vector reduction.
+    const auto load = [&](const uint8_t* src) {
+      const uint8x16_t raw = vld1q_u8(src);
+      return guest_word_order ? vrev32q_u8(raw) : raw;
+    };
+    const auto changed = [](uint8x16_t delta) { return vmaxvq_u8(delta) != 0; };
+    for (; existing - relative >= 64; relative += 64) {
+      const uint8_t* src = source.data() + relative;
+      uint8_t* dst = storage.data() + offset + relative;
+      const uint8x16_t a = load(src), b = load(src + 16);
+      const uint8x16_t c = load(src + 32), d = load(src + 48);
+      const uint8x16_t da = veorq_u8(a, vld1q_u8(dst));
+      const uint8x16_t db = veorq_u8(b, vld1q_u8(dst + 16));
+      const uint8x16_t dc = veorq_u8(c, vld1q_u8(dst + 32));
+      const uint8x16_t dd = veorq_u8(d, vld1q_u8(dst + 48));
+      if (!changed(vorrq_u8(vorrq_u8(da, db), vorrq_u8(dc, dd)))) continue;
+      if (changed(da)) { vst1q_u8(dst, a); written += kRegisterBytes; }
+      if (changed(db)) { vst1q_u8(dst + 16, b); written += kRegisterBytes; }
+      if (changed(dc)) { vst1q_u8(dst + 32, c); written += kRegisterBytes; }
+      if (changed(dd)) { vst1q_u8(dst + 48, d); written += kRegisterBytes; }
+    }
+    for (; relative < existing; relative += kRegisterBytes) {
+      uint8_t* dst = storage.data() + offset + relative;
+      const uint8x16_t value = load(source.data() + relative);
+      if (changed(veorq_u8(value, vld1q_u8(dst)))) {
+        vst1q_u8(dst, value);
+        written += kRegisterBytes;
+      }
+    }
+#else
     // Reject equal cache-line-sized groups in one comparison. Changed groups
     // still store/count only different registers, preserving exact bit patterns.
     for (; existing - relative >= 64; relative += 64) {
@@ -96,6 +129,7 @@ class NativeConstantUploadTracker {
         written += kRegisterBytes;
       }
     }
+#endif
     if (relative < source.size()) {
       convert(storage.data() + offset + relative, source.data() + relative, source.size() - relative);
       written += source.size() - relative;

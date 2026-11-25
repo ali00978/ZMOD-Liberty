@@ -77,6 +77,12 @@ jobs:
         run: |
           g++ -std=c++20 -O2 -Wall -Wextra -Werror tools/test_g925x_bc_palette.cpp -o /tmp/g925x-bc
           /tmp/g925x-bc
+      - name: Replay exact shader constant writes and descriptor cache capacity
+        run: |
+          g++ -std=c++23 -O2 -Wall -Wextra -Werror tools/test_g925x_frame_hotpaths.cpp -o /tmp/g925x-frame
+          /tmp/g925x-frame
+      - name: Replay masked restart index conversion including SIMD tails
+        run: python3 tools/test_g925_constant_index_v220.py
 
   software-vulkan:
     name: Vulkan loader smoke (Mesa lavapipe; NOT phone GPU FPS)

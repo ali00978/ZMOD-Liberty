@@ -129,7 +129,7 @@ static void TestArenaFencesAndFullReuse() {
 static void TestByteExactRestartConversion(bool wide, bool dense, uint32_t seed) {
   std::mt19937 rng(seed);
   const size_t width = wide ? 4 : 2;
-  const uint32_t count = 2048;
+  const uint32_t count = 2048 + seed % 17;  // SIMD tail sizes, including odd counts
   const uint32_t first = 3;
   std::vector<uint32_t> words(count + first + 1);
   const uint32_t sentinel = wide ? 0x00FFFFFFu : 0x1234u;

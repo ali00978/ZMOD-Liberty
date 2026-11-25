@@ -58,6 +58,9 @@ class NativeDescriptorTupleCache {
       return;
     }
     const size_t desired = std::min(required.size(), capacity_);
+    // Even if every requested key is new, there is room. No eviction could
+    // occur, so avoid hashing the entire per-frame descriptor working set.
+    if (capacity_ - entries_.size() >= desired) return;
     size_t present = 0;
     for (const auto& key : required) {
       present += entries_.contains(key);
