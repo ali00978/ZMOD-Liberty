@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -56,7 +57,7 @@ class NativeTextureProtectionIndex {
   }
   size_t size() const { return live_; }
   bool valid() const { return valid_; }
-  void Reset() { keys_.clear(); values_.clear(); used_ = 0; live_ = 0; valid_ = true; }
+  void Reset() { keys_.clear(); values_.clear(); hot_.fill(kNone); used_ = 0; live_ = 0; valid_ = true; }
 
  private:
   // Open addressing over two flat arrays; key 0 marks an empty slot (0 is
@@ -65,19 +66,39 @@ class NativeTextureProtectionIndex {
   static size_t Hash(uint64_t key) { return size_t((key * 0x9E3779B97F4A7C15ull) >> 17); }
   size_t Find(uint64_t key) const {
     if (keys_.empty() || !key) return kNone;
+    const size_t hash = Hash(key);
+    const size_t hot_index = hash & (hot_.size() - 1);
+    const size_t recent = hot_[hot_index];
+    // Cached slots are hints only. Exact generation comparison and bounds
+    // are mandatory; zero counts are still checked by Release/Contains.
+    if (recent < keys_.size() && keys_[recent] == key) return recent;
     const size_t mask = keys_.size() - 1;
-    for (size_t i = Hash(key) & mask;; i = (i + 1) & mask) {
-      if (keys_[i] == key) return i;
+    for (size_t i = hash & mask;; i = (i + 1) & mask) {
+      if (keys_[i] == key) { hot_[hot_index] = i; return i; }
       if (!keys_[i]) return kNone;
     }
   }
   size_t Slot(uint64_t key, bool insert) {
     if (!insert) return Find(key);
-    if ((used_ + 1) * 2 > keys_.size()) Rehash();
+    const size_t hash = Hash(key);
+    const size_t hot_index = hash & (hot_.size() - 1);
+    const size_t recent = hot_[hot_index];
+    if (recent < keys_.size() && keys_[recent] == key) return recent;
+    // Only genuinely new entries can trigger rehash. Repeated retains at
+    // the load threshold no longer rebuild the whole protection table.
+    if ((used_ + 1) * 2 > keys_.size()) {
+      const size_t existing = Find(key);
+      if (existing != kNone) return existing;
+      Rehash();
+    }
     const size_t mask = keys_.size() - 1;
-    for (size_t i = Hash(key) & mask;; i = (i + 1) & mask) {
-      if (keys_[i] == key) return i;
-      if (!keys_[i]) { keys_[i] = key; values_[i] = 0; ++used_; return i; }
+    for (size_t i = hash & mask;; i = (i + 1) & mask) {
+      if (keys_[i] == key) { hot_[hot_index] = i; return i; }
+      if (!keys_[i]) {
+        keys_[i] = key; values_[i] = 0; ++used_;
+        hot_[hot_index] = i;
+        return i;
+      }
     }
   }
   // Grows, and drops zero-count entries, keeping the load factor under 1/2.
@@ -93,8 +114,11 @@ class NativeTextureProtectionIndex {
       keys[j] = keys_[i]; values[j] = values_[i];
     }
     keys_.swap(keys); values_.swap(values);
+    hot_.fill(kNone);
     used_ = live_;
   }
+  // Owner already serializes all operations with the queue mutex.
+  mutable std::array<size_t, 64> hot_{};
   std::vector<uint64_t> keys_;
   std::vector<uint64_t> values_;
   size_t used_ = 0;  // occupied slots, including zero counts

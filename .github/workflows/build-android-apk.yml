@@ -357,14 +357,14 @@ jobs:
           APK="os/android/app/build/outputs/apk/debug/app-debug.apk"
           AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt.exe"
           "$AAPT" dump badging "$APK" | grep -F "package: name='com.zmodliberty.g925x'"
-          cp "$APK" ZMOD-G925-X-Lab-v0.6.0-armv9.apk
+          cp "$APK" ZMOD-G925-X-Lab-v0.7.0-armv9.apk
 
       - name: Upload independent G925 X APK
         if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
         uses: actions/upload-artifact@v4
         with:
-          name: ZMOD-G925-X-Lab-v0.6.0-armv9.apk
-          path: ZMOD-G925-X-Lab-v0.6.0-armv9.apk
+          name: ZMOD-G925-X-Lab-v0.7.0-armv9.apk
+          path: ZMOD-G925-X-Lab-v0.7.0-armv9.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -517,14 +517,14 @@ jobs:
           APK="os/android/app/build/outputs/apk/debug/app-debug.apk"
           AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt.exe"
           "$AAPT" dump badging "$APK" | grep -F "package: name='com.zmodliberty.g925x'"
-          cp "$APK" ZMOD-G925-X-Lab-v0.6.0-armv9.apk
+          cp "$APK" ZMOD-G925-X-Lab-v0.7.0-armv9.apk
 
       - name: Upload independent G925 X APK
         if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
         uses: actions/upload-artifact@v4
         with:
-          name: ZMOD-G925-X-Lab-v0.6.0-armv9.apk
-          path: ZMOD-G925-X-Lab-v0.6.0-armv9.apk
+          name: ZMOD-G925-X-Lab-v0.7.0-armv9.apk
+          path: ZMOD-G925-X-Lab-v0.7.0-armv9.apk
           if-no-files-found: error
           retention-days: 30
 

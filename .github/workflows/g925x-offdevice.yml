@@ -77,6 +77,10 @@ jobs:
         run: |
           g++ -std=c++23 -O2 -Wall -Wextra -Werror tools/test_g925x_frame_hotpaths.cpp -o /tmp/g925x-frame
           /tmp/g925x-frame
+      - name: Replay command texture protection under streaming load
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror tools/test_g925x_command_transport.cpp -o /tmp/g925x-transport
+          /tmp/g925x-transport
       - name: Replay masked restart index conversion including SIMD tails
         run: |
           python3 tools/test_g925_constant_index_v220.py

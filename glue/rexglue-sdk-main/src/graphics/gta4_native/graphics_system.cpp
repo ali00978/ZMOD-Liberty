@@ -6436,8 +6436,9 @@ void Gta4NativeGraphicsSystem::RenderWorkerMain() {
   auto log_frame_batch = [this](std::string_view boundary, const NativeCommand& boundary_command,
                                 uint32_t submitted_frame, size_t queued_after_boundary) {
 #if REX_PLATFORM_ANDROID
-    {
-      // TEMP: per-frame draw census by render target size (perf investigation).
+    if (!REXCVAR_GET(gta4_native_g925x_adaptive_sparse) ||
+        CachedDiagnosticsEnabled(rex::diagnostics::Category::kNativeTrace)) {
+      // Draw census is useful for diagnostics, not ordinary G925 X gameplay.
       static uint64_t last_report = 0;
       const uint64_t now = rex::chrono::Clock::QueryHostTickCount();
       const uint64_t frequency = rex::chrono::Clock::QueryHostTickFrequency();
@@ -6532,7 +6533,11 @@ void Gta4NativeGraphicsSystem::RenderWorkerMain() {
     }
   };
   size_t queued_after_batch = 0;
-  worker_command_batch_.reserve(32);
+  // The G925 X worker receives thousands of small guest packets each frame.
+  // Drain twice as many owners per queue-lock acquisition on this edition.
+  const bool g925x_worker_transport = REXCVAR_GET(gta4_native_g925x_adaptive_sparse);
+  const size_t worker_batch_limit = g925x_worker_transport ? 64u : 32u;
+  worker_command_batch_.reserve(worker_batch_limit);
   pipelined_recording_ = REXCVAR_GET(gta4_native_pipelined_recording);
   if (pipelined_recording_) {
     {
@@ -6546,7 +6551,7 @@ void Gta4NativeGraphicsSystem::RenderWorkerMain() {
   }
   // Retains a finished command for the frame being assembled. Pipelined
   // assembly is published to the recorder only at Present.
-  auto retain_assembled = [this](NativeCommandPool<NativeCommand>::Owner& owner, bool protect) {
+  auto retain_assembled = [this, g925x_worker_transport](NativeCommandPool<NativeCommand>::Owner& owner, bool protect) {
     if (pipelined_recording_) {
       if (protect && REXCVAR_GET(gta4_native_stamped_protection)) {
         // Nearly every draw repeats textures already in the set: find the new
@@ -6593,8 +6598,11 @@ void Gta4NativeGraphicsSystem::RenderWorkerMain() {
           // The same inputs RecordNativeFrame's frontbuffer-reader scan reads.
           const uint32_t read_epoch = assembly_protection_epoch_;
           bound.read_epoch = read_epoch;
-          const auto mark_read = [read_epoch](const NativeTextureResource* resource) {
-            if (resource)
+          const auto mark_read = [read_epoch, g925x_worker_transport](const NativeTextureResource* resource) {
+            // Worker is the only writer. A repeated read of this generation
+            // in this frame need not take write ownership of the cache line.
+            if (resource && (!g925x_worker_transport ||
+                RexRelaxedLoad(resource->assembly_read_epoch) != read_epoch))
               RexRelaxedStore(resource->assembly_read_epoch, read_epoch);
           };
           for (const auto& texture : assembled.textures) {
@@ -6654,7 +6662,7 @@ void Gta4NativeGraphicsSystem::RenderWorkerMain() {
         if (!render_worker_running_) break;
         continue;
       }
-      const size_t count = std::min<size_t>(32, render_queue_.size());
+      const size_t count = std::min<size_t>(worker_batch_limit, render_queue_.size());
       {
         std::lock_guard protection_lock(worker_protection_mutex_);
         for (size_t i = 0; i < count; ++i) worker_command_batch_.push_back(render_queue_.TakeFront());
@@ -6678,10 +6686,22 @@ void Gta4NativeGraphicsSystem::RenderWorkerMain() {
     // Commands are written on the guest core and are ~3 KB each; pulling the
     // next one in while this one records hides the cross-core misses.
     if (worker_command_cursor_ < worker_command_batch_.size()) {
-      const auto* next = reinterpret_cast<const char*>(
-          &worker_command_batch_[worker_command_cursor_]);
-      for (size_t offset = 0; offset < sizeof(NativeCommand); offset += 64)
-        __builtin_prefetch(next + offset);
+      const NativeCommand& next_command = worker_command_batch_[worker_command_cursor_];
+      if (g925x_worker_transport) {
+        // Do not fill the mobile cache with every cold diagnostic and
+        // snapshot field of a ~3 KB command. Prefetch the actual assembly
+        // inputs, leaving the recorder to fetch its own draw-only fields.
+        __builtin_prefetch(&next_command.type);
+        __builtin_prefetch(&next_command.bytes);
+        __builtin_prefetch(&next_command.shader_state);
+        __builtin_prefetch(&next_command.pipeline_state);
+        __builtin_prefetch(&next_command.textures);
+        __builtin_prefetch(&next_command.protected_generations);
+      } else {
+        const auto* next = reinterpret_cast<const char*>(&next_command);
+        for (size_t offset = 0; offset < sizeof(NativeCommand); offset += 64)
+          __builtin_prefetch(next + offset);
+      }
     }
     queued_after_pop = queued_after_batch + worker_command_batch_.size() - worker_command_cursor_;
     const auto clear_active_command = MakeScopeExit([&] {
