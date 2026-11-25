@@ -158,40 +158,42 @@ jobs:
         env:
           G925_TEST_CXX: clang++
         run: |
-          python tools/test_g925_render_state_v27.py
-          python tools/test_g925_draw_lookup_v28.py
-          python tools/test_g925_cache_batch_v214.py
-          python tools/test_g925_memo_resolve_v215.py
-          python tools/test_g925_render_hotpaths_v216.py
-          python tools/test_g925_fps_cache_v238.py
-          python tools/test_g925_steady40_v239.py
-          python tools/test_g925_vertex_work_v240.py
-          python tools/test_g925_max_fps_v241.py
-          python tools/test_g925_stutter_retirement_v217.py
-          python tools/test_g925_hint_target_v218.py
-          python tools/test_g925_surface_retirement_v219.py
-          python tools/test_g925_constant_index_v220.py
-          python tools/test_g925_surface_hot_v221.py
-          python tools/test_g925_raster_surface_hot_v222.py
-          python tools/test_g925_zero_coverage_v223.py
-          python tools/test_g925_rectangle_batch_v224.py
-          python tools/test_g925_index_upload_v29.py
-          python tools/test_g925_single_pass_index_v225.py
-          python tools/test_g925_sparse_index_batch_v226.py
-          python tools/test_g925_notification_resume_v227.py
-          python tools/test_g925_runahead_v228.py
-          python tools/test_g925_fixed_state_validation_v229.py
-          python tools/test_g925_fixed_state_hotpath_v230.py
-          python tools/test_g925_gpu_clear_v231.py
-          python tools/test_g925_playability_v232.py
-          python tools/test_g925_fps_v233.py
-          python tools/test_g925_sparse_upload_v234.py
-          python tools/test_g925_role_aware_surface_v235.py
-          python tools/test_g925_indexed_batch_coverage_v236.py
-          python tools/test_g925_rebased_index_batch_v244.py
-          python tools/test_g925x_adaptive_sparse.py
-          python tools/test_g925_present_overlap_v212.py
-          python tools/test_g925_profile_report_v27.py
+          failures=0
+          python tools/test_g925_render_state_v27.py || { echo "::error::Regression failed: tools/test_g925_render_state_v27.py"; failures=1; }
+          python tools/test_g925_draw_lookup_v28.py || { echo "::error::Regression failed: tools/test_g925_draw_lookup_v28.py"; failures=1; }
+          python tools/test_g925_cache_batch_v214.py || { echo "::error::Regression failed: tools/test_g925_cache_batch_v214.py"; failures=1; }
+          python tools/test_g925_memo_resolve_v215.py || { echo "::error::Regression failed: tools/test_g925_memo_resolve_v215.py"; failures=1; }
+          python tools/test_g925_render_hotpaths_v216.py || { echo "::error::Regression failed: tools/test_g925_render_hotpaths_v216.py"; failures=1; }
+          python tools/test_g925_fps_cache_v238.py || { echo "::error::Regression failed: tools/test_g925_fps_cache_v238.py"; failures=1; }
+          python tools/test_g925_steady40_v239.py || { echo "::error::Regression failed: tools/test_g925_steady40_v239.py"; failures=1; }
+          python tools/test_g925_vertex_work_v240.py || { echo "::error::Regression failed: tools/test_g925_vertex_work_v240.py"; failures=1; }
+          python tools/test_g925_max_fps_v241.py || { echo "::error::Regression failed: tools/test_g925_max_fps_v241.py"; failures=1; }
+          python tools/test_g925_stutter_retirement_v217.py || { echo "::error::Regression failed: tools/test_g925_stutter_retirement_v217.py"; failures=1; }
+          python tools/test_g925_hint_target_v218.py || { echo "::error::Regression failed: tools/test_g925_hint_target_v218.py"; failures=1; }
+          python tools/test_g925_surface_retirement_v219.py || { echo "::error::Regression failed: tools/test_g925_surface_retirement_v219.py"; failures=1; }
+          python tools/test_g925_constant_index_v220.py || { echo "::error::Regression failed: tools/test_g925_constant_index_v220.py"; failures=1; }
+          python tools/test_g925_surface_hot_v221.py || { echo "::error::Regression failed: tools/test_g925_surface_hot_v221.py"; failures=1; }
+          python tools/test_g925_raster_surface_hot_v222.py || { echo "::error::Regression failed: tools/test_g925_raster_surface_hot_v222.py"; failures=1; }
+          python tools/test_g925_zero_coverage_v223.py || { echo "::error::Regression failed: tools/test_g925_zero_coverage_v223.py"; failures=1; }
+          python tools/test_g925_rectangle_batch_v224.py || { echo "::error::Regression failed: tools/test_g925_rectangle_batch_v224.py"; failures=1; }
+          python tools/test_g925_index_upload_v29.py || { echo "::error::Regression failed: tools/test_g925_index_upload_v29.py"; failures=1; }
+          python tools/test_g925_single_pass_index_v225.py || { echo "::error::Regression failed: tools/test_g925_single_pass_index_v225.py"; failures=1; }
+          python tools/test_g925_sparse_index_batch_v226.py || { echo "::error::Regression failed: tools/test_g925_sparse_index_batch_v226.py"; failures=1; }
+          python tools/test_g925_notification_resume_v227.py || { echo "::error::Regression failed: tools/test_g925_notification_resume_v227.py"; failures=1; }
+          python tools/test_g925_runahead_v228.py || { echo "::error::Regression failed: tools/test_g925_runahead_v228.py"; failures=1; }
+          python tools/test_g925_fixed_state_validation_v229.py || { echo "::error::Regression failed: tools/test_g925_fixed_state_validation_v229.py"; failures=1; }
+          python tools/test_g925_fixed_state_hotpath_v230.py || { echo "::error::Regression failed: tools/test_g925_fixed_state_hotpath_v230.py"; failures=1; }
+          python tools/test_g925_gpu_clear_v231.py || { echo "::error::Regression failed: tools/test_g925_gpu_clear_v231.py"; failures=1; }
+          python tools/test_g925_playability_v232.py || { echo "::error::Regression failed: tools/test_g925_playability_v232.py"; failures=1; }
+          python tools/test_g925_fps_v233.py || { echo "::error::Regression failed: tools/test_g925_fps_v233.py"; failures=1; }
+          python tools/test_g925_sparse_upload_v234.py || { echo "::error::Regression failed: tools/test_g925_sparse_upload_v234.py"; failures=1; }
+          python tools/test_g925_role_aware_surface_v235.py || { echo "::error::Regression failed: tools/test_g925_role_aware_surface_v235.py"; failures=1; }
+          python tools/test_g925_indexed_batch_coverage_v236.py || { echo "::error::Regression failed: tools/test_g925_indexed_batch_coverage_v236.py"; failures=1; }
+          python tools/test_g925_rebased_index_batch_v244.py || { echo "::error::Regression failed: tools/test_g925_rebased_index_batch_v244.py"; failures=1; }
+          python tools/test_g925x_adaptive_sparse.py || { echo "::error::Regression failed: tools/test_g925x_adaptive_sparse.py"; failures=1; }
+          python tools/test_g925_present_overlap_v212.py || { echo "::error::Regression failed: tools/test_g925_present_overlap_v212.py"; failures=1; }
+          python tools/test_g925_profile_report_v27.py || { echo "::error::Regression failed: tools/test_g925_profile_report_v27.py"; failures=1; }
+          exit "$failures"
 
       - name: Install Android SDK platform and NDK r29
         run: |

@@ -17,7 +17,15 @@ assert header.count('std::memcpy(dst + size_t(i) * sizeof(value), &value, sizeof
 # the full-width all-ones restart sentinel stays on the optimized memcpy path.
 tail = header.split('  } else {\n    // Masked restart conversion', 1)[1]
 assert 'std::memcpy(dst, src, size_t(key.count) * element)' not in tail
-assert tail.count('for (uint32_t i = 0; i < key.count; ++i)') == 2
+# SIMD loops advance the same cursor as the scalar tail, so each index
+# is transformed once. The compiled replay below checks exact output,
+# unaligned pointers, short tails, masks and failure guards.
+assert tail.count("uint32_t i = 0;") == 2
+assert tail.count("for (; i < key.count; ++i)") == 2
+assert "for (; key.count - i >= 4; i += 4)" in tail
+assert "for (; key.count - i >= 8; i += 8)" in tail
+assert "vceqq_u32(vandq_u32(value, mask), marker)" in tail
+assert "vceqq_u16(value, marker)" in tail
 
 compiler = os.environ.get('G925_TEST_CXX') or shutil.which('clang++') or shutil.which('g++')
 if not compiler:

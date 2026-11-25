@@ -48,14 +48,10 @@ jobs:
           python tools/test_g925_batched_cpu_v25.py
           python tools/test_g925_stable_16ms_v26.py
           python tools/test_g925_native_app_v1.py
-      - name: Run exact 16/32-bit renderer rebase replay (C++)
+      - name: Run complete APK host regression suite (report all failures)
         env:
           G925_TEST_CXX: clang++
-        run: python tools/test_g925_rebased_index_batch_v244.py
-      - name: Replay G925 X adaptive native CPU scheduling (and full-quality Android defaults)
-        env:
-          G925_TEST_CXX: clang++
-        run: python tools/test_g925x_adaptive_sparse.py
+        run: python tools/run_g925x_host_regressions.py
       - name: Verify G925 X Android identity, POCO hardware detection, host CPU index benchmark
         env:
           G925_TEST_CXX: clang++
@@ -82,7 +78,9 @@ jobs:
           g++ -std=c++23 -O2 -Wall -Wextra -Werror tools/test_g925x_frame_hotpaths.cpp -o /tmp/g925x-frame
           /tmp/g925x-frame
       - name: Replay masked restart index conversion including SIMD tails
-        run: python3 tools/test_g925_constant_index_v220.py
+        run: |
+          python3 tools/test_g925_constant_index_v220.py
+          python3 tools/test_g925_single_pass_index_v225.py
 
   software-vulkan:
     name: Vulkan loader smoke (Mesa lavapipe; NOT phone GPU FPS)
