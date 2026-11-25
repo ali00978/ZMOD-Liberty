@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [feature/g925-v244-rebased-index-batching]
   push:
-    branches: [feature/g925x-device-engine-lab-v1, feature/g925x-index-fastpath-v04]
+    branches: [feature/g925x-device-engine-lab-v1, feature/g925x-index-fastpath-v04, feature/g925x-texture-neon-v05]
   workflow_dispatch:
 
 permissions:
@@ -53,6 +53,22 @@ jobs:
           G925_TEST_CXX: clang++
           G925X_BENCHMARK: '1'
         run: python tools/test_g925x_lab.py
+
+  texture-palette:
+    name: Exact BC texture palette replay (scalar and ARM64 NEON)
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compile and compare 200000 palette blocks
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror tools/test_g925x_bc_palette.cpp -o /tmp/g925x-bc
+          /tmp/g925x-bc
 
   software-vulkan:
     name: Vulkan loader smoke (Mesa lavapipe; NOT phone GPU FPS)

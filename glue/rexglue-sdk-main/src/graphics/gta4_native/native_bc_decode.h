@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <vulkan/vulkan.h>
+#include "native_bc_palette_expand.h"
 
 namespace rex::graphics::gta4_native {
 
@@ -59,13 +60,7 @@ inline void DecodeColor(const uint8_t* block, bool allow_punchthrough, uint8_t r
     p[2][3] = 255;
     p[3][3] = 0;
   }
-  for (int i = 0; i < 16; ++i) {
-    const uint32_t* c = p[(selectors >> (2 * i)) & 3];
-    rgba[i * 4 + 0] = uint8_t(c[0]);
-    rgba[i * 4 + 1] = uint8_t(c[1]);
-    rgba[i * 4 + 2] = uint8_t(c[2]);
-    rgba[i * 4 + 3] = uint8_t(c[3]);
-  }
+  ExpandColorPalette(p, selectors, rgba);
 }
 
 inline void DecodeBc3Alpha(const uint8_t* block, uint8_t rgba[64]) {
