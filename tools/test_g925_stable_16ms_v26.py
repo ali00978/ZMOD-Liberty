@@ -41,6 +41,11 @@ assert 'CMAKE_CXX_COMPILER_LAUNCHER:STRING' in native_build
 assert 'SCCACHE_CMAKE_ARGS' in native_build
 assert int(re.search(r'versionCode\s*=\s*(\d+)', gradle)[1]) >= 34
 assert re.search(r'versionSuffix\s*=\s*"-alpha-2\.\d+-g925-', gradle)
-assert 'branches: [feature/g925-stable-16ms-v26]' in workflow
+# Check membership of the original push branch, not the exact list spelling.
+push_block = workflow.split("  pull_request:", 1)[0]
+push_branches = next(line.split("[", 1)[1].split("]", 1)[0].split(",")
+                     for line in push_block.splitlines()
+                     if line.strip().startswith("branches: ["))
+assert "feature/g925-stable-16ms-v26" in [branch.strip() for branch in push_branches]
 assert workflow.count('python tools/test_g925_stable_16ms_v26.py') == 2
 print("PASS: 16ms / stable preserved; native hint lifecycle, reports and CMake cache wired")

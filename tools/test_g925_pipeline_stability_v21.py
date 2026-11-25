@@ -33,7 +33,12 @@ assert 'new Intent(Intent.ACTION_SEND)' in java
 assert 'recent.size() > 240' in java
 assert 'play for 2 minutes' in java
 assert 'kNativeTextureEvictionGraceFrames = 240;' in old
-assert 'branches: [feature/g925-stable-16ms-v26]' in workflow
+# Check membership of the original push branch, not the exact list spelling.
+push_block = workflow.split("  pull_request:", 1)[0]
+push_branches = next(line.split("[", 1)[1].split("]", 1)[0].split(",")
+                     for line in push_block.splitlines()
+                     if line.strip().startswith("branches: ["))
+assert "feature/g925-stable-16ms-v26" in [branch.strip() for branch in push_branches]
 assert "needs.plan.outputs.build_mode == 'full'" in workflow
 assert 'python3 tools/validate_g925_fast_apk.py --select-mode' in workflow
 print("PASS: demanded pipeline priority, capacity rejection and stock Mali renderer preserved")

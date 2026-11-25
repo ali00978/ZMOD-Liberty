@@ -24,5 +24,10 @@ assert 'cpu_command_recording_ms' in report
 assert 'gpu_frame_ms' in report
 assert 'Values are not' not in report
 assert '"frame-interval"' in native
-assert 'branches: [feature/g925-stable-16ms-v26]' in flow
+# Check membership of the original push branch, not the exact list spelling.
+push_block = flow.split("  pull_request:", 1)[0]
+push_branches = next(line.split("[", 1)[1].split("]", 1)[0].split(",")
+                     for line in push_block.splitlines()
+                     if line.strip().startswith("branches: ["))
+assert "feature/g925-stable-16ms-v26" in [branch.strip() for branch in push_branches]
 print("PASS: delayed native profiling; actual frame timings; source CSV filtered to no-private-data summary")

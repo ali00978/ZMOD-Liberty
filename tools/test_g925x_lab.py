@@ -29,6 +29,11 @@ assert workflow.count("Package independent G925 X APK") == 2, "Both CI paths mus
 assert workflow.count("Upload independent G925 X APK") == 2, "Both CI paths must publish X"
 assert workflow.count("LIBERTY_EDITION=g925x bash") == 2
 assert 'ZMOD-G925-X-Lab-v0.5.0-armv9.apk' in workflow
+push_block = workflow.split("  pull_request:", 1)[0]
+push_branches = next(line.split("[", 1)[1].split("]", 1)[0].split(",")
+                     for line in push_block.splitlines()
+                     if line.strip().startswith("branches: ["))
+assert "feature/g925x-texture-neon-v05" in [branch.strip() for branch in push_branches], "G925 X APK build must trigger on push"
 assert "package: name='com.zmodliberty.g925x'" in workflow
 
 javac = os.getenv("G925_TEST_JAVAC") or shutil.which("javac")

@@ -21,5 +21,10 @@ assert "vkQueueWaitIdle" not in probe and "vkDeviceWaitIdle" not in probe
 assert "performance-hint: config enabled=%d stable=%d" in hint
 assert "legacy-hint=%s" in power
 assert 'line.contains("g925-paint:")' in java
-assert 'branches: [feature/g925-stable-16ms-v26]' in workflow
+# Check membership of the original push branch, not the exact list spelling.
+push_block = workflow.split("  pull_request:", 1)[0]
+push_branches = next(line.split("[", 1)[1].split("]", 1)[0].split(",")
+                     for line in push_block.splitlines()
+                     if line.strip().startswith("branches: ["))
+assert "feature/g925-stable-16ms-v26" in [branch.strip() for branch in push_branches]
 print("PASS: existing GPU-presenter host timestamps, ADPF effective config and filtered reports")

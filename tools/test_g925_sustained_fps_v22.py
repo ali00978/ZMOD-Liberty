@@ -23,5 +23,10 @@ assert 'new GraphicsSetting("Android CPU performance hints",' in java
 assert 'line.contains("power:")' in java
 assert 'line.contains("thermal-guard:")' in java
 assert 'recent.size() > 240' in java
-assert 'branches: [feature/g925-stable-16ms-v26]' in flow
+# Check membership of the original push branch, not the exact list spelling.
+push_block = flow.split("  pull_request:", 1)[0]
+push_branches = next(line.split("[", 1)[1].split("]", 1)[0].split(",")
+                     for line in push_block.splitlines()
+                     if line.strip().startswith("branches: ["))
+assert "feature/g925-stable-16ms-v26" in [branch.strip() for branch in push_branches]
 print("PASS: stable ADPF thread roles, no visual change, GPU/battery/thermal log, selectable hint-off")

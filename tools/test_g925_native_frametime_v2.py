@@ -46,7 +46,12 @@ assert 'kNativeTextureEvictionGraceFrames = 240;' in native
 assert 'kNativeTextureCacheRetentionFrames = 600;' in native
 assert 'kNativeBufferCacheRetentionFrames = 600;' in native
 assert 'kNativeBufferCacheLimitMiB = 256;' in native
-assert 'branches: [feature/g925-stable-16ms-v26]' in flow
+# Check membership of the original push branch, not the exact list spelling.
+push_block = flow.split("  pull_request:", 1)[0]
+push_branches = next(line.split("[", 1)[1].split("]", 1)[0].split(",")
+                     for line in push_block.splitlines()
+                     if line.strip().startswith("branches: ["))
+assert "feature/g925-stable-16ms-v26" in [branch.strip() for branch in push_branches]
 assert "needs.plan.outputs.build_mode == 'full'" in flow
 assert 'python3 tools/validate_g925_fast_apk.py --select-mode' in flow
 print("PASS: native ADPF feedback A/B, title gap histogram, original Mali renderer preserved")
