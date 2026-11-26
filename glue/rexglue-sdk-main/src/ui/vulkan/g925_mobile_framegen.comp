@@ -1,0 +1,61 @@
+#version 450
+// Mobile midpoint interpolation, one 16x16 tile per workgroup. The first
+// 25 lanes estimate translation at low spatial frequency, then 64 lanes
+// reconstruct four output pixels each. No desktop SDK, no CPU readbacks.
+layout(local_size_x=8,local_size_y=8) in;
+layout(binding=0) uniform sampler2D previousFrame;
+layout(binding=1) uniform sampler2D currentFrame;
+layout(binding=2,rgba16f) uniform writeonly image2D generatedFrame;
+shared float costs[25];
+shared ivec2 motion;
+shared float confidence;
+float luma(vec3 c) { return dot(c,vec3(0.2126,0.7152,0.0722)); }
+float errorAt(ivec2 p,ivec2 d,ivec2 size) {
+    float cost=0.0;
+    for(int y=-4;y<=4;y+=4) for(int x=-4;x<=4;x+=4) {
+        ivec2 q=p+ivec2(x,y);
+        vec3 a=texelFetch(previousFrame,clamp(q-d,ivec2(0),size-1),0).rgb;
+        vec3 b=texelFetch(currentFrame,clamp(q,ivec2(0),size-1),0).rgb;
+        cost+=abs(luma(a)-luma(b));
+    }
+    return cost/9.0;
+}
+void main() {
+    ivec2 size=imageSize(generatedFrame);
+    ivec2 tile=ivec2(gl_WorkGroupID.xy)*16;
+    uint lane=gl_LocalInvocationIndex;
+    if(lane<25u) {
+        ivec2 d=(ivec2(int(lane)%5,int(lane)/5)-2)*8;
+        costs[lane]=errorAt(min(tile+8,size-1),d,size)+0.0002*float(abs(d.x)+abs(d.y));
+    }
+    barrier();
+    if(lane==0u) {
+        uint best=12u;
+        for(uint i=0u;i<25u;++i) if(costs[i]<costs[best]) best=i;
+        motion=(ivec2(int(best)%5,int(best)/5)-2)*8;
+        float stationary=costs[12], residual=costs[best];
+        confidence=clamp((stationary-residual)/max(stationary,0.001),0.0,1.0)
+                   *(1.0-smoothstep(0.035,0.12,residual));
+        // No useful motion or a likely cut: show current instead of blending.
+        if(best==12u || residual>0.12) confidence=0.0;
+    }
+    barrier();
+    ivec2 origin=tile+ivec2(gl_LocalInvocationID.xy)*2;
+    for(int y=0;y<2;++y) for(int x=0;x<2;++x) {
+        ivec2 p=origin+ivec2(x,y);
+        if(any(greaterThanEqual(p,size))) continue;
+        vec4 real=texelFetch(currentFrame,p,0);
+        vec2 uv=(vec2(p)+0.5)/vec2(size);
+        vec2 shift=vec2(motion)*0.5/vec2(size);
+        vec2 a=uv-shift,b=uv+shift;
+        if(confidence<0.35 || any(lessThan(a,vec2(0))) || any(greaterThan(a,vec2(1))) ||
+           any(lessThan(b,vec2(0))) || any(greaterThan(b,vec2(1)))) {
+            imageStore(generatedFrame,p,real); continue;
+        }
+        vec3 before=texture(previousFrame,a).rgb, after=texture(currentFrame,b).rgb;
+        vec3 diff=abs(before-after);
+        float mismatch=max(max(diff.r,diff.g),diff.b);
+        float weight=confidence*(1.0-smoothstep(0.06,0.20,mismatch));
+        imageStore(generatedFrame,p,vec4(mix(real.rgb,mix(before,after,0.5),weight),real.a));
+    }
+}

@@ -1178,6 +1178,10 @@ public class LauncherActivity extends Activity {
                     new String[] {"gta4_fsr1_quality"},
                     new String[] {"Default", "Ultra quality", "Quality", "Balanced", "Performance"},
                     new String[] {"ultra_quality", "quality", "balanced", "performance"}),
+            new GraphicsSetting("Mobile Frame Generation", "Experimental: 30/40 real FPS, up to 60 displayed; restart",
+                    new String[] {"gta4_mobile_frame_generation"},
+                    new String[] {"Default", "Off", "On (experimental)"},
+                    new String[] {"false", "true"}),
             new GraphicsSetting("Anti-aliasing", "Smooths jagged edges",
                     new String[] {"gta4_native_anti_aliasing"},
                     new String[] {"Default", "Off", "FXAA", "SMAA"},
@@ -1426,7 +1430,7 @@ public class LauncherActivity extends Activity {
             card.addView(text("Spatial FSR1 reconstructs a 720p or 900p image from fewer scene pixels. "
                     + "Keeps your existing frame limit, shadows, textures and draw distance. "
                     + "Quality changes render resolution only; FPS gains depend on GPU load. "
-                    + "This is not frame generation. Use the Resolution and Upscaler menus to turn it off.",
+                    + "Mobile Frame Generation is a separate Display option. Use Resolution and Upscaler to disable FSR.",
                     12, R.color.picker_muted), matchWrap(dp(8)));
             Button fsrQuality = button("FSR QUALITY / 900P OUTPUT", true);
             fsrQuality.setOnClickListener(v -> applyG925XSpatialUpscaling("quality", "900"));

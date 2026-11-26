@@ -19,7 +19,8 @@ public final class G925XNativeDefaultsTest {
             "--gta4_native_shadow_interval=1"));
         G925XNativeDefaults.apply(x, true);
         G925XNativeDefaults.apply(x, true);
-        check(x.size() == 4, "must be idempotent");
+        check(x.size() == 5, "must be idempotent");
+        check(x.contains("--gta4_mobile_frame_generation=true"), "X enables mobile frame generation");
         check(x.contains("--gta4_native_g925x_adaptive_sparse=true"), "must enable dedicated scheduler");
         check(x.contains("--gta4_draw_distance_scale=1.0"), "must preserve full draw distance");
         check(x.contains("--gta4_fps_guard=0"), "must preserve reflect refresh");
@@ -28,12 +29,15 @@ public final class G925XNativeDefaultsTest {
         List<String> explicitOff = new ArrayList<>(List.of(
             "--gta4_native_g925x_adaptive_sparse=false"));
         G925XNativeDefaults.apply(explicitOff, true);
-        check(explicitOff.size() == 1, "must honor explicit off");
+        check(explicitOff.size() == 2 && explicitOff.contains("--gta4_native_g925x_adaptive_sparse=false"), "must honor explicit off");
 
         List<String> negative = new ArrayList<>(List.of(
             "--no-gta4_native_g925x_adaptive_sparse"));
         G925XNativeDefaults.apply(negative, true);
-        check(negative.size() == 1, "must honor negation");
+        check(negative.size() == 2 && negative.contains("--no-gta4_native_g925x_adaptive_sparse"), "must honor negation");
+        List<String> fgOff = new ArrayList<>(List.of("--gta4_mobile_frame_generation=false"));
+        G925XNativeDefaults.apply(fgOff, true);
+        check(fgOff.size() == 2 && !fgOff.contains("--gta4_mobile_frame_generation=true"), "must honor FG off");
         System.out.println("PASS: independent G925 X scheduler settings are lossless and user-controllable");
     }
 }

@@ -748,6 +748,11 @@ class Presenter {
       uint32_t mailbox_index, uint32_t frontbuffer_width, uint32_t frontbuffer_height,
       std::function<bool(GuestOutputRefreshContext& context)> refresher, bool& is_8bpc_out_ref) = 0;
 
+  // Optional post-refresh producer. True only for a submitted, retained pair.
+  virtual bool PrepareAdditionalGeneratedOutput(uint32_t, const GuestOutputProvenance&) {
+    return false;
+  }
+
   // For guest output capturing (for debugging use thus - shouldn't be adding
   // any noise like dithering that's not present in the original image),
   // converting a 10bpc RGB pixel to 8bpc that can be stored in common image

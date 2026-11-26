@@ -19,11 +19,21 @@ for needle in (
     '"com.zmodliberty.g925x"',
     '"ZMOD G925 X Lab"',
     'versionCode   = 72',
-    'if (g925XEdition) versionCode = 79',
+    'if (g925XEdition) versionCode = 80',
     'buildConfigField("boolean", "G925_X_EDITION", g925XEdition.toString())',
 ):
     assert needle in gradle, needle
 assert 'G925XDeviceProfile.describe(' in launcher
+assert '"gta4_mobile_frame_generation"' in launcher
+assert 'On (experimental)' in launcher
+mobile = (ROOT / "glue/rexglue-sdk-main/src/ui/vulkan/g925_mobile_framegen.inc").read_text()
+presenter = (ROOT / "glue/rexglue-sdk-main/src/ui/vulkan/vulkan_presenter.cpp").read_text()
+assert 'PrepareAdditionalGeneratedOutput' in presenter
+assert 'mobile_framegen_->Process' in presenter
+assert 'vkCmdDispatch' in mobile and 'vkQueueSubmit' in mobile
+assert 'access.Commit()' in mobile and 'vkGetFenceStatus' in mobile
+assert 'kMaxPairs = 8' in mobile
+
 # Explicit opt-in: only the three intended cvars, no thermal/FPS cap override.
 preset = launcher.split("private void applyG925XSpatialUpscaling(String quality, String outputHeight) {", 1)[1].split("// Graphics settings:", 1)[0]
 assert 'if (!BuildConfig.G925_X_EDITION) return;' in preset
@@ -42,7 +52,7 @@ assert 'G925NativeDefaults.apply(arguments, BuildConfig.G925_X_EDITION)' in acti
 assert workflow.count("Package independent G925 X APK") == 2, "Both CI paths must package X"
 assert workflow.count("Upload independent G925 X APK") == 2, "Both CI paths must publish X"
 assert workflow.count("LIBERTY_EDITION=g925x bash") == 2
-assert 'ZMOD-G925-X-Lab-v0.9.0-armv9.apk' in workflow
+assert 'ZMOD-G925-X-Lab-v0.10.0-armv9.apk' in workflow
 push_block = workflow.split("  pull_request:", 1)[0]
 push_branches = next(line.split("[", 1)[1].split("]", 1)[0].split(",")
                      for line in push_block.splitlines()
@@ -56,7 +66,10 @@ if not javac or not java:
     raise RuntimeError("Java 17 JDK required to run hardware recognition tests")
 with tempfile.TemporaryDirectory(prefix="g925x-device-") as tmp:
     subprocess.run([javac, "-encoding", "UTF-8", "-d", tmp,
-                    str(profile), str(tests)], check=True, timeout=60)
+                    str(profile), str(tests),
+                    str(profile.parent / "G925XNativeDefaults.java"),
+                    str(ROOT / "tools/fixtures/g925/G925XNativeDefaultsTest.java")], check=True, timeout=60)
+    subprocess.run([java, "-cp", tmp, "com.libertyrecomp.G925XNativeDefaultsTest"], check=True, timeout=60)
     subprocess.run([java, "-cp", tmp, "com.libertyrecomp.G925XDeviceProfileTest"],
                    check=True, timeout=60)
 

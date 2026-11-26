@@ -128,4 +128,9 @@ jobs:
             glslangValidator -V --target-env vulkan1.1 "$shader" -o "$out"
             spirv-val --target-env vulkan1.1 "$out"
           done
+          shader=glue/rexglue-sdk-main/src/ui/vulkan/g925_mobile_framegen.comp
+          glslangValidator -V --target-env vulkan1.1 "$shader" -o /tmp/g925-mobile.spv
+          spirv-val --target-env vulkan1.1 /tmp/g925-mobile.spv
+          glslangValidator -V --target-env vulkan1.1 --vn kG925MobileFramegenSpv -o /tmp/g925-mobile.h "$shader"
+          grep -q kG925MobileFramegenSpv /tmp/g925-mobile.h
           python3 tools/experiments/g925x_framegen/test_reference.py

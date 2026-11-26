@@ -624,6 +624,7 @@ bool Presenter::RefreshGuestOutput(
   // from a global latest frame or from provenance attached before rendering.
   writable_properties.provenance.frame_pixel_probe = {};
   bool is_active = writable_properties.IsActive();
+  bool additional_pair = false;
   if (is_active) {
     auto observed_refresher = [&](GuestOutputRefreshContext& context) {
       context.SetFramePixelProbe({});
@@ -652,6 +653,11 @@ bool Presenter::RefreshGuestOutput(
             provenance.selected_generation, provenance.native_command_count);
       }
       return false;
+    }
+    if (!writable_properties.provenance.paired_presentation &&
+        !writable_properties.provenance.frame_pixel_probe.valid()) {
+      additional_pair = PrepareAdditionalGeneratedOutput(guest_output_mailbox_writable_, provenance);
+      writable_properties.provenance.paired_presentation = additional_pair;
     }
     guest_output_active_last_refresh_ = true;
   } else {
@@ -683,7 +689,8 @@ bool Presenter::RefreshGuestOutput(
   const uint64_t publication_serial = frame_publication_gate_.Publish(
       is_active ? provenance.frame_rate_limit : 0, paired_presentation);
   writable_properties.provenance.publication_serial = publication_serial;
-  host_frame_rate_limit_.store(is_active ? provenance.frame_rate_limit : 0,
+  // A mobile pair gets its own display cap; the producer keeps its real cap.
+  host_frame_rate_limit_.store(is_active ? (additional_pair ? 60u : provenance.frame_rate_limit) : 0,
                                std::memory_order_relaxed);
 
   // Make the new image the next to present on the host (the "ready" one),

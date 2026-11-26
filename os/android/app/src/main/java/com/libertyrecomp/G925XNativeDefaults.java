@@ -13,7 +13,12 @@ final class G925XNativeDefaults {
 
     static void apply(List<String> args, boolean g925x) {
         if (!g925x) return;
-        final String name = "gta4_native_g925x_adaptive_sparse";
+        addUnlessConfigured(args, "gta4_native_g925x_adaptive_sparse");
+        // Default on only in G925 X. Native eligibility checks may fall back.
+        addUnlessConfigured(args, "gta4_mobile_frame_generation");
+    }
+
+    private static void addUnlessConfigured(List<String> args, String name) {
         final String positive = "--" + name;
         final String negative = "--no-" + name;
         for (String argument : args) {

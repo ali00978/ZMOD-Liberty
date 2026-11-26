@@ -56,6 +56,11 @@
 #include <rex/ui/surface_mac.h>
 #endif
 
+#if REX_PLATFORM_ANDROID
+REXCVAR_DEFINE_BOOL(gta4_mobile_frame_generation, false, "UI/Vulkan",
+                    "Experimental mobile optical interpolation (30/40 real FPS, SDR)");
+#endif
+
 REXCVAR_DEFINE_BOOL(present_render_pass_clear, true, "UI/Presenter",
                     "Clear render pass during presentation");
 
@@ -102,7 +107,11 @@ REXCVAR_DEFINE_BOOL(vulkan_hdr, kVulkanHDRDefault, "UI/Vulkan",
 
 namespace {
 rex::ui::vulkan::PresentModeOptions ReadPresentModeOptions() {
-  return {rex::cvar::Query<bool>("vulkan_prefer_present_mode_fifo"),
+  return {
+#if REX_PLATFORM_ANDROID
+           REXCVAR_GET(gta4_mobile_frame_generation) ||
+#endif
+           rex::cvar::Query<bool>("vulkan_prefer_present_mode_fifo"),
           rex::cvar::Query<bool>("vulkan_allow_present_mode_mailbox"),
           rex::cvar::Query<bool>("vulkan_allow_present_mode_immediate"),
           rex::cvar::Query<bool>("vulkan_allow_present_mode_fifo_relaxed")};
@@ -172,6 +181,10 @@ namespace shaders {
 #endif
 #include "../shaders/vulkan_spirv/guest_output_triangle_strip_rect_vs.h"
 }  // namespace shaders
+
+#if REX_PLATFORM_ANDROID
+#include "g925_mobile_framegen.inc"
+#endif
 
 VulkanPresenter::PaintContext::Submission::~Submission() {
   const VulkanDevice::Functions& dfn = vulkan_device_->functions();
@@ -300,6 +313,9 @@ VulkanPresenter::~VulkanPresenter() {
       image_instance.refresher_completion.reset();
     }
   }
+#if REX_PLATFORM_ANDROID
+  mobile_framegen_.reset();
+#endif
   ui_submission_tracker_.Shutdown();
   guest_output_image_refresher_submission_tracker_.Shutdown();
 
@@ -697,6 +713,9 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
                                                                  bool was_paintable,
                                                                  bool& is_vsync_implicit_out) {
   generated_frame_presentation_enabled_.store(false, std::memory_order_release);
+#if REX_PLATFORM_ANDROID
+  mobile_framegen_epoch_.fetch_add(1, std::memory_order_acq_rel);
+#endif
   const VulkanInstance* const vulkan_instance = vulkan_device_->vulkan_instance();
   const VulkanInstance::Functions& ifn = vulkan_instance->functions();
   const VkInstance instance = vulkan_instance->instance();
@@ -1093,6 +1112,9 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
 
 void VulkanPresenter::DisconnectPaintingFromSurfaceFromUIThreadImpl() {
   generated_frame_presentation_enabled_.store(false, std::memory_order_release);
+#if REX_PLATFORM_ANDROID
+  mobile_framegen_epoch_.fetch_add(1, std::memory_order_acq_rel);
+#endif
   paint_context_.DestroySwapchainAndVulkanSurface();
   pending_generated_frame_.reset();
   generated_delivery_.ResetPending();
@@ -1198,6 +1220,40 @@ bool VulkanPresenter::RefreshGuestOutputImpl(
   }
 
   return refresher_succeeded;
+}
+
+bool VulkanPresenter::PrepareAdditionalGeneratedOutput(
+    uint32_t mailbox_index, const GuestOutputProvenance& provenance) {
+#if REX_PLATFORM_ANDROID
+  auto& slot = guest_output_images_[mailbox_index];
+  const uint64_t epoch = mobile_framegen_epoch_.load(std::memory_order_acquire);
+  if (!REXCVAR_GET(gta4_mobile_frame_generation) || !CanPresentGeneratedFrames() ||
+      paint_context_.swapchain_is_hdr || provenance.diagnostic_trace ||
+      (provenance.frame_rate_limit != 30 && provenance.frame_rate_limit != 40) ||
+      !provenance.submitted_frame || !slot.image || slot.generated_frame) {
+    if (mobile_framegen_) mobile_framegen_->ResetHistory();
+    return false;
+  }
+  if (!mobile_framegen_) mobile_framegen_ = std::make_shared<MobileFrameGen>(vulkan_device_);
+  auto pair = mobile_framegen_->Process(slot.image, provenance.submitted_frame, epoch);
+  if (!pair) return false;
+  // A surface may disconnect while the producer is recording. Retain the GPU
+  // work but do not publish a pair across epochs.
+  if (!CanPresentGeneratedFrames() ||
+      epoch != mobile_framegen_epoch_.load(std::memory_order_acquire)) {
+    mobile_framegen_->ResetHistory();
+    return false;
+  }
+  auto images = std::make_shared<GeneratedFrameImages>();
+  images->generated = GuestOutputImage::ReferenceGenerated(vulkan_device_, pair, false, slot.image);
+  images->real = GuestOutputImage::ReferenceGenerated(vulkan_device_, pair, true, slot.image);
+  images->interval_ns = pair->interval_ns;
+  images->hdr = false;
+  slot.generated_frame = std::move(images);
+  return true;
+#else
+  return false;
+#endif
 }
 
 VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(

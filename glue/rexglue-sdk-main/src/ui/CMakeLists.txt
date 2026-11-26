@@ -100,6 +100,21 @@ if(REXGLUE_USE_D3D12)
 endif()
 
 add_library(rexui OBJECT ${REXUI_SOURCES})
+if(ANDROID AND REXGLUE_USE_VULKAN)
+    # Compile portable mobile compute shader on the host; no desktop FSR SDK.
+    if(NOT GTA4_NATIVE_GLSLANG_VALIDATOR)
+        find_program(GTA4_NATIVE_GLSLANG_VALIDATOR NAMES glslangValidator REQUIRED)
+    endif()
+    set(_mobile_shader "${CMAKE_CURRENT_SOURCE_DIR}/vulkan/g925_mobile_framegen.comp")
+    set(_mobile_header "${CMAKE_CURRENT_BINARY_DIR}/g925_mobile_framegen_spv.h")
+    add_custom_command(OUTPUT "${_mobile_header}"
+        COMMAND "${GTA4_NATIVE_GLSLANG_VALIDATOR}" -V --target-env vulkan1.1
+                --vn kG925MobileFramegenSpv -o "${_mobile_header}" "${_mobile_shader}"
+        DEPENDS "${_mobile_shader}" VERBATIM)
+    add_custom_target(rexui_mobile_framegen_shader DEPENDS "${_mobile_header}")
+    add_dependencies(rexui rexui_mobile_framegen_shader)
+    target_include_directories(rexui PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+endif()
 add_library(rex::ui ALIAS rexui)
 rexglue_enable_dlss(rexui)
 

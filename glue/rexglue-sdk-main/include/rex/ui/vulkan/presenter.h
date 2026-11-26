@@ -227,6 +227,8 @@ class VulkanPresenter final : public Presenter {
                               std::function<bool(GuestOutputRefreshContext& context)> refresher,
                               bool& is_8bpc_out_ref) override;
 
+  bool PrepareAdditionalGeneratedOutput(uint32_t mailbox_index,
+                                        const GuestOutputProvenance& provenance) override;
   PaintResult PaintAndPresentImpl(bool execute_ui_drawers) override;
   bool UsesExplicitPaintDemand() const override { return true; }
 
@@ -689,6 +691,11 @@ class VulkanPresenter final : public Presenter {
   // well as by presenter initialization and shutdown.
   PaintContext paint_context_;
   std::atomic<bool> generated_frame_presentation_enabled_{false};
+#if defined(__ANDROID__)
+  struct MobileFrameGen;
+  std::shared_ptr<MobileFrameGen> mobile_framegen_;
+  std::atomic<uint64_t> mobile_framegen_epoch_{1};
+#endif
   GeneratedFrameDelivery generated_delivery_;
   std::shared_ptr<GeneratedFrameImages> pending_generated_frame_;
   GuestOutputProperties pending_generated_properties_{};
