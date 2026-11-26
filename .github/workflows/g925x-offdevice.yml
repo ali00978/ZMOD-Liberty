@@ -109,3 +109,23 @@ jobs:
           vulkaninfo --summary | tee software-vulkan.txt
           grep -Eiq 'llvmpipe|lavapipe|software' software-vulkan.txt
           echo "PASS: software Vulkan device enumerated, not a Mali-G925 FPS measurement"
+
+  mobile-framegen-prototype:
+    name: Compile mobile interpolation shaders and verify reference motion
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install SPIR-V tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq glslang-tools spirv-tools
+      - name: Validate prototype shaders (not linked into Android APK)
+        run: |
+          set -eu
+          for shader in tools/experiments/g925x_framegen/*.comp; do
+            out="/tmp/$(basename "$shader").spv"
+            glslangValidator -V --target-env vulkan1.1 "$shader" -o "$out"
+            spirv-val --target-env vulkan1.1 "$out"
+          done
+          python3 tools/experiments/g925x_framegen/test_reference.py

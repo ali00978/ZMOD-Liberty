@@ -1081,15 +1081,16 @@ public class LauncherActivity extends Activity {
      * Keep the user's frame limit and every other visual/scheduling setting.
      * Use the normal native FSR1 path, not an Android driver injection.
      */
-    private void applyG925XSpatialUpscaling(String quality) {
+    private void applyG925XSpatialUpscaling(String quality, String outputHeight) {
         if (!BuildConfig.G925_X_EDITION) return;
         if (!quality.equals("quality") && !quality.equals("balanced")) return;
+        if (!outputHeight.equals("900") && !outputHeight.equals("720")) return;
         if (mSettingsDirty) {
             toast("Save other changes first, then apply FSR");
             return;
         }
         final String[][] selected = {
-                {"gta4_output_height_cap", "900"},
+                {"gta4_output_height_cap", outputHeight},
                 {"gta4_native_upscaler", "fsr1"},
                 {"gta4_fsr1_quality", quality}
         };
@@ -1422,19 +1423,26 @@ public class LauncherActivity extends Activity {
         }
         if (BuildConfig.G925_X_EDITION) {
             card.addView(heading("G925 X / FSR UPSCALING", 17), matchWrap(dp(8)));
-            card.addView(text("Spatial FSR1 reconstructs a 900p image from fewer scene pixels. "
+            card.addView(text("Spatial FSR1 reconstructs a 720p or 900p image from fewer scene pixels. "
                     + "Keeps your existing frame limit, shadows, textures and draw distance. "
                     + "Quality changes render resolution only; FPS gains depend on GPU load. "
                     + "This is not frame generation. Use the Resolution and Upscaler menus to turn it off.",
                     12, R.color.picker_muted), matchWrap(dp(8)));
             Button fsrQuality = button("FSR QUALITY / 900P OUTPUT", true);
-            fsrQuality.setOnClickListener(v -> applyG925XSpatialUpscaling("quality"));
+            fsrQuality.setOnClickListener(v -> applyG925XSpatialUpscaling("quality", "900"));
             card.addView(fsrQuality, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
             Button fsrBalanced = button("FSR BALANCED / 900P OUTPUT", false);
-            fsrBalanced.setOnClickListener(v -> applyG925XSpatialUpscaling("balanced"));
+            fsrBalanced.setOnClickListener(v -> applyG925XSpatialUpscaling("balanced", "900"));
             card.addView(fsrBalanced, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+            Button fsrMobile = button("FSR MOBILE / 720P OUTPUT", false);
+            fsrMobile.setOnClickListener(v -> applyG925XSpatialUpscaling("quality", "720"));
+            card.addView(fsrMobile, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+            card.addView(text("Mobile mode targets a lower scene resolution while retaining your FPS cap. "
+                    + "Try this if 900p FSR is GPU-limited.", 12, R.color.picker_muted),
+                    matchWrap(dp(8)));
         }
         Button official60 = button("ORIGINAL GRAPHICS / 60 FPS CAP", false);
         official60.setOnClickListener(v -> {

@@ -1,0 +1,30 @@
+#version 450
+// Prototype only. Host must supply consecutive HUD-free display frames,
+// low-resolution flow, a scene-cut flag, and an independent output image.
+layout(local_size_x=8,local_size_y=8) in;
+layout(binding=0) uniform sampler2D previousFrame;
+layout(binding=1) uniform sampler2D currentFrame;
+layout(binding=2) uniform sampler2D flowTexture;
+layout(binding=3,rgba8) uniform writeonly image2D generatedFrame;
+layout(push_constant) uniform Params { ivec2 motionExtent; uint sceneCut; } params;
+void main() {
+    ivec2 p=ivec2(gl_GlobalInvocationID.xy), extent=imageSize(generatedFrame);
+    if(any(greaterThanEqual(p,extent))) return;
+    vec2 uv=(vec2(p)+0.5)/vec2(extent);
+    vec4 real=texture(currentFrame,uv);
+    if(params.sceneCut!=0u || any(lessThanEqual(params.motionExtent,ivec2(0)))) {
+        imageStore(generatedFrame,p,real); return;
+    }
+    vec4 flow=texture(flowTexture,uv);
+    vec2 shift=flow.xy/vec2(params.motionExtent)*0.5;
+    vec2 a=uv-shift,b=uv+shift;
+    if(flow.z<0.35 || any(lessThan(a,vec2(0))) || any(greaterThan(a,vec2(1))) ||
+       any(lessThan(b,vec2(0))) || any(greaterThan(b,vec2(1)))) {
+        imageStore(generatedFrame,p,real); return;
+    }
+    vec4 earlier=texture(previousFrame,a), later=texture(currentFrame,b);
+    // Reject inconsistent samples instead of blindly double-imaging edges.
+    float mismatch=max(max(abs(earlier.r-later.r),abs(earlier.g-later.g)),abs(earlier.b-later.b));
+    float weight=flow.z*(1.0-smoothstep(0.08,0.25,mismatch));
+    imageStore(generatedFrame,p,mix(real,mix(earlier,later,0.5),weight));
+}

@@ -1,0 +1,41 @@
+#version 450
+// One invocation per 8x8 tile of LOW-resolution luma input.
+// Flow is previous->current in input pixel units. RGBA32F flow output.
+layout(local_size_x=8,local_size_y=8) in;
+layout(binding=0) uniform sampler2D previousFrame;
+layout(binding=1) uniform sampler2D currentFrame;
+layout(binding=2,rgba32f) uniform writeonly image2D flowOut;
+float luma(vec3 c) { return dot(c,vec3(0.2126,0.7152,0.0722)); }
+float sampleLuma(sampler2D img, ivec2 p) {
+    return luma(texelFetch(img,clamp(p,ivec2(0),textureSize(img,0)-1),0).rgb);
+}
+float errorFor(ivec2 p,ivec2 d) {
+    float cost=0.0;
+    for(int y=-2;y<=2;y+=2) for(int x=-2;x<=2;x+=2) {
+        ivec2 q=p+ivec2(x,y);
+        cost+=abs(sampleLuma(currentFrame,q)-sampleLuma(previousFrame,q-d));
+    }
+    return cost/9.0;
+}
+void main() {
+    ivec2 tile=ivec2(gl_GlobalInvocationID.xy);
+    if(any(greaterThanEqual(tile,imageSize(flowOut)))) return;
+    ivec2 p=min(tile*8+4,textureSize(currentFrame,0)-1);
+    float stationary=errorFor(p,ivec2(0));
+    float best=stationary;
+    ivec2 delta=ivec2(0);
+    for(int y=-8;y<=8;y+=4) for(int x=-8;x<=8;x+=4) {
+        ivec2 d=ivec2(x,y);
+        float cost=errorFor(p,d)+0.0004*float(abs(x)+abs(y));
+        if(cost<best) {best=cost;delta=d;}
+    }
+    ivec2 coarse=delta;
+    for(int y=-2;y<=2;y++) for(int x=-2;x<=2;x++) {
+        ivec2 d=clamp(coarse+ivec2(x,y),ivec2(-8),ivec2(8));
+        float cost=errorFor(p,d)+0.0004*float(abs(d.x)+abs(d.y));
+        if(cost<best) {best=cost;delta=d;}
+    }
+    float confidence=(stationary<0.015&&best<0.015)?1.0:
+        clamp((stationary-best)/max(stationary,0.001),0.0,1.0)*(1.0-smoothstep(0.04,0.16,best));
+    imageStore(flowOut,tile,vec4(vec2(delta),confidence,best));
+}
