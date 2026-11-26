@@ -1,6 +1,7 @@
 // Included in vulkan_presenter.cpp, inside rex::ui::vulkan. The producer
 // owns this object; the paint thread sees only immutable GeneratedFrame leases.
 #include "g925_mobile_framegen_spv.h"
+#include "g925_mobile_framegen_policy.h"
 
 struct VulkanPresenter::MobileFrameGen {
   static constexpr size_t kMaxPairs = 8;
@@ -143,7 +144,7 @@ struct VulkanPresenter::MobileFrameGen {
     device->functions().vkCmdPipelineBarrier(cb,src_stage,dst_stage,0,0,nullptr,0,nullptr,1,&b);
   }
   std::shared_ptr<GeneratedFrame> Process(const std::shared_ptr<GuestOutputImage>& input,
-                                          uint32_t sequence, uint64_t epoch) {
+                                          uint32_t sequence, uint64_t epoch, uint32_t cap) {
     const auto size = input->extent();
     // Bound VRAM and work on mobile. Higher resolutions use the real frame.
     if (!size.width || !size.height || size.height > 900 ||
@@ -160,9 +161,22 @@ struct VulkanPresenter::MobileFrameGen {
       cooldown_until_ns = now + 250'000'000;
       ResetHistory(); return {};
     }
+    // At 60 capped real rendering, don't double work once real FPS is already
+    // above ~35. Track observed cadence separately from history seeding.
+    const uint64_t observed_delta = now > observed_ns ? now-observed_ns : 0;
+    const bool observed_consecutive = observed_epoch == epoch && sequence == observed_frame+1;
+    observed_ns=now; observed_epoch=epoch; observed_frame=sequence;
+    if (cap == 60 && (!observed_consecutive ||
+                      !G925MobileFramegenCadence(cap, observed_delta))) {
+      ResetHistory(); return {};
+    }
     const bool interpolate = history && epoch == last_epoch && sequence == last_frame+1 &&
         history->extent.width == size.width && history->extent.height == size.height &&
-        delta >= 15'000'000 && delta <= 55'000'000;
+        G925MobileFramegenCadence(cap, delta);
+    // Never queue a growing train of copy/compute jobs on a saturated GPU.
+    size_t pending_count=0;
+    for (auto& job : pool) { job->Collect(); pending_count += job->pending ? 1 : 0; }
+    if (pending_count >= 2) { cooldown_until_ns=now+250'000'000; ResetHistory(); return {}; }
     auto pair = Acquire(size);
     if (!pair) { cooldown_until_ns = now + 250'000'000; ResetHistory(); return {}; }
     const auto& fn = device->functions(); const auto vk = device->device();
@@ -241,5 +255,7 @@ struct VulkanPresenter::MobileFrameGen {
   std::vector<std::shared_ptr<Pair>> pool;
   std::shared_ptr<Pair> history;
   uint64_t last_epoch=0,last_ns=0,cooldown_until_ns=0;
+  uint64_t observed_ns=0,observed_epoch=0;
+  uint32_t observed_frame=0;
   uint32_t last_frame=0;
 };

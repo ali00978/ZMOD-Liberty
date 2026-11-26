@@ -15,6 +15,7 @@
 #include <imgui.h>
 
 #include <rex/cvar.h>
+#include <rex/ui/presenter.h>
 
 REXCVAR_DEFINE_BOOL(gta4_overlay_fps, false, "GTA IV/Overlay",
                     "Overlay: the game's real update rate (world frames per second)");
@@ -174,7 +175,8 @@ bool PerfOverlayEnabled() noexcept {
          REXCVAR_GET(gta4_overlay_memory) || REXCVAR_GET(gta4_overlay_temperature);
 }
 
-void DrawPerfOverlay(ImDrawList* draw, ImFont* font, float width, float height) noexcept {
+void DrawPerfOverlay(ImDrawList* draw, ImFont* font, float width, float height,
+                     const rex::ui::Presenter* presenter) noexcept {
   if (!draw || !font || width <= 0.0f || height <= 0.0f || !PerfOverlayEnabled()) return;
   Refresh();
   const float fps = g_liberty_title_fps.load(std::memory_order_relaxed);
@@ -185,8 +187,8 @@ void DrawPerfOverlay(ImDrawList* draw, ImFont* font, float width, float height) 
   };
   // The overlay can render every display tick: avoid a new heap-backed
   // vector (and growth allocations) per frame, especially when enabled for
-  // stutter profiling. Seven lines are currently possible; capacity is eight.
-  std::array<Line, 8> lines{};
+  // stutter profiling. Allow two extra presentation measurement lines.
+  std::array<Line, 10> lines{};
   size_t line_count = 0;
   auto add = [&lines, &line_count](ImU32 color, const char* format, auto... values) {
     if (line_count >= lines.size()) return;
@@ -199,7 +201,37 @@ void DrawPerfOverlay(ImDrawList* draw, ImFont* font, float width, float height) 
                           : fps >= 20.0f ? IM_COL32(240, 210, 90, 255)
                                          : IM_COL32(240, 100, 100, 255);
   const ImU32 white = IM_COL32(235, 235, 235, 255);
-  if (REXCVAR_GET(gta4_overlay_fps)) add(fps_color, "FPS  %.0f", fps);
+  if (REXCVAR_GET(gta4_overlay_fps)) {
+    add(fps_color, "GAME FPS  %.0f", fps);
+    // Counts are recorded only after successful queue-present, not merely
+    // dispatched shaders. Distinguish unique game publications from FG.
+    static const rex::ui::Presenter* last_presenter = nullptr;
+    static rex::ui::Presenter::PresentationCounts baseline{};
+    static double sample_time=0.0, real_rate=0.0, fg_rate=0.0;
+    static bool valid=false;
+    if (presenter) {
+      const auto counts=presenter->GetPresentationCounts();
+      const double now=Now();
+      if(last_presenter!=presenter || now-sample_time>4.0 ||
+         counts.real<baseline.real || counts.generated<baseline.generated) {
+        last_presenter=presenter; baseline=counts; sample_time=now; valid=false;
+      } else if(now-sample_time>=1.0) {
+        const double elapsed=now-sample_time;
+        real_rate=double(counts.real-baseline.real)/elapsed;
+        fg_rate=double(counts.generated-baseline.generated)/elapsed;
+        baseline=counts; sample_time=now; valid=true;
+      }
+      if(valid) {
+        add(white, "OUTPUT FPS %.0f", real_rate+fg_rate);
+        add(white, "FG FPS %.0f", fg_rate);
+      } else {
+        add(white, "%s", "OUTPUT FPS --");
+        add(white, "%s", "FG FPS --");
+      }
+    } else {
+      last_presenter=nullptr; valid=false;
+    }
+  }
   if (REXCVAR_GET(gta4_overlay_frametime)) {
     // A mean FPS reciprocal is not a measured frame interval.
     const float p95_ms = g_liberty_title_p95_ms.load(std::memory_order_relaxed);

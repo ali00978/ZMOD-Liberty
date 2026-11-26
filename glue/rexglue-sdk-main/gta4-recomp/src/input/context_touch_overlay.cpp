@@ -103,7 +103,8 @@ void ContextTouchOverlay::OnDraw(ImGuiIO& io) {
   // The performance overlay draws whether or not the touch controls are
   // visible (also with a physical controller) and keeps the layer repainting.
   gta4::android::DrawPerfOverlay(ImGui::GetForegroundDrawList(), ImGui::GetFont(),
-                                 io.DisplaySize.x, io.DisplaySize.y);
+                                 io.DisplaySize.x, io.DisplaySize.y,
+                                 imgui_drawer()->attached_presenter());
   const bool perf_overlay = gta4::android::PerfOverlayEnabled();
 #else
   const bool perf_overlay = false;

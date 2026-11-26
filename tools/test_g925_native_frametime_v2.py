@@ -34,7 +34,7 @@ assert 'metrics.over_50ms' in hook
 assert 'g_liberty_title_p95_ms.store' in hook
 assert 'TITLE P95  %.0fms' in overlay
 assert 'MAX GAP  %.0fms' in overlay
-assert 'std::array<Line, 8> lines{};' in overlay
+assert 'std::array<Line, 10> lines{};' in overlay
 assert 'std::vector<Line> lines;' not in overlay
 assert 'if (line_count >= lines.size()) return;' in overlay
 assert 'for (size_t i = 0; i < line_count; ++i)' in overlay

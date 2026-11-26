@@ -19,7 +19,7 @@ for needle in (
     '"com.zmodliberty.g925x"',
     '"ZMOD G925 X Lab"',
     'versionCode   = 72',
-    'if (g925XEdition) versionCode = 80',
+    'if (g925XEdition) versionCode = 81',
     'buildConfigField("boolean", "G925_X_EDITION", g925XEdition.toString())',
 ):
     assert needle in gradle, needle
@@ -33,6 +33,13 @@ assert 'mobile_framegen_->Process' in presenter
 assert 'vkCmdDispatch' in mobile and 'vkQueueSubmit' in mobile
 assert 'access.Commit()' in mobile and 'vkGetFenceStatus' in mobile
 assert 'kMaxPairs = 8' in mobile
+assert 'pending_count >= 2' in mobile
+assert 'G925MobileFramegenCadence(cap, delta)' in mobile
+assert 'CountPresentedPublication(publication,' in presenter
+overlay = (ROOT / "glue/rexglue-sdk-main/gta4-recomp/src/android/android_perf_overlay.cpp").read_text()
+assert 'GAME FPS' in overlay and 'OUTPUT FPS' in overlay and 'FG FPS' in overlay
+shader = (ROOT / "glue/rexglue-sdk-main/src/ui/vulkan/g925_mobile_framegen.comp").read_text()
+assert 'shared float costs[13]' in shader and 'shared float currentLuma[5]' in shader
 
 # Explicit opt-in: only the three intended cvars, no thermal/FPS cap override.
 preset = launcher.split("private void applyG925XSpatialUpscaling(String quality, String outputHeight) {", 1)[1].split("// Graphics settings:", 1)[0]
@@ -47,12 +54,13 @@ assert 'graphics-before-g925x-fsr.txt' in preset
 assert 'applyG925XSpatialUpscaling("quality", "900")' in launcher
 assert 'applyG925XSpatialUpscaling("balanced", "900")' in launcher
 assert 'applyG925XSpatialUpscaling("quality", "720")' in launcher
+assert 'applyG925XSpatialUpscaling("performance", "720")' in launcher
 assert 'if (!outputHeight.equals("900") && !outputHeight.equals("720")) return;' in preset
 assert 'G925NativeDefaults.apply(arguments, BuildConfig.G925_X_EDITION)' in activity
 assert workflow.count("Package independent G925 X APK") == 2, "Both CI paths must package X"
 assert workflow.count("Upload independent G925 X APK") == 2, "Both CI paths must publish X"
 assert workflow.count("LIBERTY_EDITION=g925x bash") == 2
-assert 'ZMOD-G925-X-Lab-v0.10.0-armv9.apk' in workflow
+assert 'ZMOD-G925-X-Lab-v0.11.0-armv9.apk' in workflow
 push_block = workflow.split("  pull_request:", 1)[0]
 push_branches = next(line.split("[", 1)[1].split("]", 1)[0].split(",")
                      for line in push_block.splitlines()
@@ -89,12 +97,21 @@ with tempfile.TemporaryDirectory(prefix="g925x-fsr-") as tmp:
     source = Path(tmp) / "policy.cpp"
     source.write_text(r"""
 #include "rex/graphics/gta4_native/upscaling_policy.h"
+#include "g925_mobile_framegen_policy.h"
+using rex::ui::vulkan::G925MobileFramegenCadence;
+static_assert(G925MobileFramegenCadence(60,40'000'000));
+static_assert(!G925MobileFramegenCadence(60,16'666'667));
+static_assert(G925MobileFramegenCadence(30,33'333'333));
+static_assert(!G925MobileFramegenCadence(30,60'000'000));
+static_assert(!G925MobileFramegenCadence(0,40'000'000));
 using namespace rex::graphics::gta4_native;
 constexpr auto q = SelectFsr1RenderExtent(1600, 900, true, "quality", false, false, false);
 constexpr auto b = SelectFsr1RenderExtent(1600, 900, true, "balanced", false, false, false);
 static_assert(q.active() && q.width == 1067 && q.height == 600);
 constexpr auto mobile = SelectFsr1RenderExtent(1280, 720, true, "quality", false, false, false);
 static_assert(mobile.active() && mobile.width == 853 && mobile.height == 480);
+constexpr auto fast = SelectFsr1RenderExtent(1280,720,true,"performance",false,false,false);
+static_assert(fast.active() && fast.width == 640 && fast.height == 360);
 static_assert(b.active() && b.width == 941 && b.height == 529);
 static_assert(!SelectFsr1RenderExtent(640, 360, true, "balanced", false, false, false).active());
 static_assert(!SelectFsr1RenderExtent(1600, 900, false, "quality", false, false, false).active());
@@ -102,6 +119,7 @@ static_assert(!SelectFsr1RenderExtent(1600, 900, true, "quality", true, false, f
 int main() {}
 """)
     subprocess.run([cxx, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-I",
-                    str(ROOT / "glue/rexglue-sdk-main/include"), str(source),
+                    str(ROOT / "glue/rexglue-sdk-main/include"), "-I",
+                    str(ROOT / "glue/rexglue-sdk-main/src/ui/vulkan"), str(source),
                     "-o", str(Path(tmp) / "policy")], check=True, timeout=60)
 print("PASS: G925 X identity, native policy, opt-in FSR and spatial extent checks")

@@ -371,6 +371,13 @@ class Presenter {
 
   virtual Surface::TypeFlags GetSupportedSurfaceTypes() const = 0;
 
+  // Successful queue-present counters, not panel scanout or game-update FPS.
+  struct PresentationCounts { uint64_t real, generated; };
+  PresentationCounts GetPresentationCounts() const noexcept {
+    return {presented_real_count_.load(std::memory_order_relaxed),
+            presented_generated_count_.load(std::memory_order_relaxed)};
+  }
+
   // For calling from the Window for the Presenter attached to it.
   // May be called from the destructor of the presenter through the window.
   void SetWindowSurfaceFromUIThread(Window* new_window, Surface* new_surface);
@@ -748,6 +755,20 @@ class Presenter {
       uint32_t mailbox_index, uint32_t frontbuffer_width, uint32_t frontbuffer_height,
       std::function<bool(GuestOutputRefreshContext& context)> refresher, bool& is_8bpc_out_ref) = 0;
 
+  // Paint-owner only: count a unique delivered publication once per stage.
+  void CountPresentedPublication(uint64_t publication, bool generated) noexcept {
+    if (!publication) return;
+    if (generated) {
+      if (publication <= last_counted_generated_) return;
+      last_counted_generated_ = publication;
+      presented_generated_count_.fetch_add(1, std::memory_order_relaxed);
+    } else {
+      if (publication <= last_counted_real_) return;
+      last_counted_real_ = publication;
+      presented_real_count_.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
+
   // Optional post-refresh producer. True only for a submitted, retained pair.
   virtual bool PrepareAdditionalGeneratedOutput(uint32_t, const GuestOutputProvenance&) {
     return false;
@@ -1093,6 +1114,8 @@ class Presenter {
   const std::thread::id ui_thread_id_ = std::this_thread::get_id();
   std::atomic<uint64_t> paint_retry_delay_ns_{1'000'000};
   uint64_t host_rate_trace_count_ = 0;
+  std::atomic<uint64_t> presented_real_count_{0}, presented_generated_count_{0};
+  uint64_t last_counted_real_ = 0, last_counted_generated_ = 0;
 
   // Ordered by the Z order, and then by the time of addition.
   // Note: All the iteration logic involving this Z ordering must be the same as

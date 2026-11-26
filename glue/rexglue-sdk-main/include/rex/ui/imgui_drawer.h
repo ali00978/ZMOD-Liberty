@@ -45,6 +45,8 @@ class ImGuiDrawer : public WindowInputListener, public UIDrawer {
   ~ImGuiDrawer();
 
   ImGuiIO& GetIO();
+  // Called on the dialog drawing thread, where SetPresenter is serialized.
+  Presenter* attached_presenter() const noexcept { return presenter_; }
   // Poll threads read this snapshot without touching ImGui or drawer lifetime.
   std::shared_ptr<const std::atomic<bool>> input_capture_snapshot() const {
     return input_capture_snapshot_;

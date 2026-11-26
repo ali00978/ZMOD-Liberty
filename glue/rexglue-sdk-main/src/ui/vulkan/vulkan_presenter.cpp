@@ -58,7 +58,7 @@
 
 #if REX_PLATFORM_ANDROID
 REXCVAR_DEFINE_BOOL(gta4_mobile_frame_generation, false, "UI/Vulkan",
-                    "Experimental mobile optical interpolation (30/40 real FPS, SDR)");
+                    "Experimental mobile optical interpolation (measured cadence, SDR)");
 #endif
 
 REXCVAR_DEFINE_BOOL(present_render_pass_clear, true, "UI/Presenter",
@@ -1229,13 +1229,15 @@ bool VulkanPresenter::PrepareAdditionalGeneratedOutput(
   const uint64_t epoch = mobile_framegen_epoch_.load(std::memory_order_acquire);
   if (!REXCVAR_GET(gta4_mobile_frame_generation) || !CanPresentGeneratedFrames() ||
       paint_context_.swapchain_is_hdr || provenance.diagnostic_trace ||
-      (provenance.frame_rate_limit != 30 && provenance.frame_rate_limit != 40) ||
+      (provenance.frame_rate_limit != 30 && provenance.frame_rate_limit != 40 &&
+       provenance.frame_rate_limit != 60) ||
       !provenance.submitted_frame || !slot.image || slot.generated_frame) {
     if (mobile_framegen_) mobile_framegen_->ResetHistory();
     return false;
   }
   if (!mobile_framegen_) mobile_framegen_ = std::make_shared<MobileFrameGen>(vulkan_device_);
-  auto pair = mobile_framegen_->Process(slot.image, provenance.submitted_frame, epoch);
+  auto pair = mobile_framegen_->Process(slot.image, provenance.submitted_frame, epoch,
+                                       provenance.frame_rate_limit);
   if (!pair) return false;
   // A surface may disconnect while the producer is recording. Retain the GPU
   // work but do not publish a pair across epochs.
@@ -3018,6 +3020,8 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
   }
   if (present_result == VK_SUCCESS || present_result == VK_SUBOPTIMAL_KHR) {
     const uint64_t publication = guest_output_properties.provenance.publication_serial;
+    if (guest_output_pass_recorded)
+      CountPresentedPublication(publication, generated_stage == GeneratedFrameDelivery::Stage::kGenerated);
     if (selected_generated_frame && !guest_output_pass_recorded) {
       // A successfully presented fallback clear is not delivery of the pair.
       // Keep the same stage pending and retry through the common pacer.

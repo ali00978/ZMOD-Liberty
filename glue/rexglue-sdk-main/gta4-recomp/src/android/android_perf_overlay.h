@@ -6,6 +6,8 @@
 struct ImDrawList;
 struct ImFont;
 
+namespace rex::ui { class Presenter; }
+
 namespace gta4::android {
 
 // True when at least one overlay line is enabled (the dialog then repaints
@@ -13,6 +15,7 @@ namespace gta4::android {
 bool PerfOverlayEnabled() noexcept;
 
 // Draws the enabled lines in the top-left corner of a width x height screen.
-void DrawPerfOverlay(ImDrawList* draw, ImFont* font, float width, float height) noexcept;
+void DrawPerfOverlay(ImDrawList* draw, ImFont* font, float width, float height,
+                     const rex::ui::Presenter* presenter) noexcept;
 
 }  // namespace gta4::android

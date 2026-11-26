@@ -1083,8 +1083,10 @@ public class LauncherActivity extends Activity {
      */
     private void applyG925XSpatialUpscaling(String quality, String outputHeight) {
         if (!BuildConfig.G925_X_EDITION) return;
-        if (!quality.equals("quality") && !quality.equals("balanced")) return;
+        if (!quality.equals("quality") && !quality.equals("balanced") &&
+                !quality.equals("performance")) return;
         if (!outputHeight.equals("900") && !outputHeight.equals("720")) return;
+        if (quality.equals("performance") && !outputHeight.equals("720")) return;
         if (mSettingsDirty) {
             toast("Save other changes first, then apply FSR");
             return;
@@ -1178,7 +1180,7 @@ public class LauncherActivity extends Activity {
                     new String[] {"gta4_fsr1_quality"},
                     new String[] {"Default", "Ultra quality", "Quality", "Balanced", "Performance"},
                     new String[] {"ultra_quality", "quality", "balanced", "performance"}),
-            new GraphicsSetting("Mobile Frame Generation", "Experimental: 30/40 real FPS, up to 60 displayed; restart",
+            new GraphicsSetting("Mobile Frame Generation", "Experimental: 30/40/60 cap; up to 60 output FPS; restart",
                     new String[] {"gta4_mobile_frame_generation"},
                     new String[] {"Default", "Off", "On (experimental)"},
                     new String[] {"false", "true"}),
@@ -1443,6 +1445,10 @@ public class LauncherActivity extends Activity {
             Button fsrMobile = button("FSR MOBILE / 720P OUTPUT", false);
             fsrMobile.setOnClickListener(v -> applyG925XSpatialUpscaling("quality", "720"));
             card.addView(fsrMobile, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+            Button fsrFast = button("FSR MOBILE PERFORMANCE / 360P INTERNAL", false);
+            fsrFast.setOnClickListener(v -> applyG925XSpatialUpscaling("performance", "720"));
+            card.addView(fsrFast, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
             card.addView(text("Mobile mode targets a lower scene resolution while retaining your FPS cap. "
                     + "Try this if 900p FSR is GPU-limited.", 12, R.color.picker_muted),
