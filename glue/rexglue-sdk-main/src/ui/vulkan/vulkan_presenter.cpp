@@ -45,6 +45,7 @@
 
 #if REX_PLATFORM_ANDROID
 #include <rex/ui/surface_android.h>
+#include "g925_mobile_framegen_policy.h"
 #endif
 #if REX_PLATFORM_GNU_LINUX
 #include <rex/ui/surface_gnulinux.h>

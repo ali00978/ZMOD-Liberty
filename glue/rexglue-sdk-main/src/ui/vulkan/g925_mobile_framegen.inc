@@ -1,7 +1,6 @@
 // Included in vulkan_presenter.cpp, inside rex::ui::vulkan. The producer
 // owns this object; the paint thread sees only immutable GeneratedFrame leases.
 #include "g925_mobile_framegen_spv.h"
-#include "g925_mobile_framegen_policy.h"
 
 struct VulkanPresenter::MobileFrameGen {
   static constexpr size_t kMaxPairs = 8;
