@@ -72,10 +72,13 @@ struct VulkanPresenter::MobileFrameGen {
     if (layout) fn.vkDestroyDescriptorSetLayout(vk, layout, nullptr);
     if (sampler) fn.vkDestroySampler(vk, sampler, nullptr);
   }
-  void ResetHistory() { history.reset(); last_frame = 0; last_ns = 0; }
+  void ResetHistory() {
+    history.reset(); last_frame = 0; last_ns = 0;
+    for (auto& pair : pool) pair->Collect();
+  }
   bool Init() {
-    if (pipeline) return true;
     if (failed) return false;
+    if (pipeline) return true;
     failed = true;
     if (!device->properties().shaderStorageImageExtendedFormats) return false;
     VkFormatProperties format{};
@@ -148,13 +151,20 @@ struct VulkanPresenter::MobileFrameGen {
       ResetHistory(); return {};
     }
     const uint64_t now = FramePacerNowNs();
+    // Slow real rendering or a full pool should not cause extra copies every
+    // scene. Briefly back off, then seed clean history for another attempt.
+    if (now < cooldown_until_ns) { ResetHistory(); return {}; }
     if (history && epoch == last_epoch && sequence == last_frame) return {};
     const uint64_t delta = now > last_ns ? now-last_ns : 0;
+    if (history && epoch == last_epoch && delta > 55'000'000) {
+      cooldown_until_ns = now + 250'000'000;
+      ResetHistory(); return {};
+    }
     const bool interpolate = history && epoch == last_epoch && sequence == last_frame+1 &&
         history->extent.width == size.width && history->extent.height == size.height &&
         delta >= 15'000'000 && delta <= 55'000'000;
     auto pair = Acquire(size);
-    if (!pair) { ResetHistory(); return {}; }
+    if (!pair) { cooldown_until_ns = now + 250'000'000; ResetHistory(); return {}; }
     const auto& fn = device->functions(); const auto vk = device->device();
     auto access = input->AcquireAccess();
     if (!access.ticket().valid()) { ResetHistory(); return {}; }
@@ -230,6 +240,6 @@ struct VulkanPresenter::MobileFrameGen {
   bool failed=false, logged_pair=false;
   std::vector<std::shared_ptr<Pair>> pool;
   std::shared_ptr<Pair> history;
-  uint64_t last_epoch=0,last_ns=0;
+  uint64_t last_epoch=0,last_ns=0,cooldown_until_ns=0;
   uint32_t last_frame=0;
 };

@@ -52,7 +52,7 @@ void main() {
            any(lessThan(b,vec2(0))) || any(greaterThan(b,vec2(1)))) {
             imageStore(generatedFrame,p,real); continue;
         }
-        vec3 before=texture(previousFrame,a).rgb, after=texture(currentFrame,b).rgb;
+        vec3 before=textureLod(previousFrame,a,0.0).rgb, after=textureLod(currentFrame,b,0.0).rgb;
         vec3 diff=abs(before-after);
         float mismatch=max(max(diff.r,diff.g),diff.b);
         float weight=confidence*(1.0-smoothstep(0.06,0.20,mismatch));
