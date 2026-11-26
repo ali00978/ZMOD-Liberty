@@ -50,6 +50,8 @@ def changed_file_is_launcher_only(path: str) -> bool:
         "os/android/app/src/main/AndroidManifest.xml",
         "os/android/app/src/main/assets/default_args.txt",
         ".github/workflows/build-android-apk.yml",
+        ".github/workflows/g925x-offdevice.yml",
+        "tools/test_g925x_lab.py",
         "os/android/scripts/build_apk.sh",
         "tools/fixtures/g925/G925ProfileReportTest.java",
         "tools/fixtures/g925/G925NativeDefaultsTest.java",
@@ -100,7 +102,9 @@ def validate(run_id: int, repo: str, target: str, gpu: str, cpu: str, token: str
         if compare.get("status") != "ahead":
             raise UnsafeFastBuild(
                 f"Base run source is not an ancestor of this commit: {compare.get('status')}")
-        files = compare.get("files", [])
+        files = compare.get("files")
+        if not isinstance(files, list) or not files:
+            raise UnsafeFastBuild("GitHub comparison did not return changed files")
         if len(files) >= 300:
             raise UnsafeFastBuild("GitHub comparison is too large for safe fast mode")
         # A rename out of a native path still changes native sources. Check both
@@ -129,7 +133,7 @@ def select_build_mode(event: str, requested_mode: str, requested_base: str,
                 raise UnsafeFastBuild("Java-only mode requires an explicit base run ID")
             return "java-only", requested_base
         return "full", ""
-    if event != "pull_request" or gpu != "mali" or cpu != "armv9" or not branch:
+    if event not in {"push", "pull_request"} or gpu != "mali" or cpu != "armv9" or not branch:
         return "full", ""
     try:
         runs = github_api(

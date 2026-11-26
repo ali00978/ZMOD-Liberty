@@ -25,6 +25,9 @@ assert validate.changed_file_is_launcher_only(
     "os/android/app/src/main/java/com/libertyrecomp/LauncherActivity.java")
 assert validate.changed_file_is_launcher_only("os/android/app/build.gradle.kts")
 assert validate.changed_file_is_launcher_only(".github/workflows/build-android-apk.yml")
+assert validate.changed_file_is_launcher_only(".github/workflows/g925x-offdevice.yml")
+assert validate.changed_file_is_launcher_only("tools/test_g925x_lab.py")
+assert not validate.changed_file_is_launcher_only("tools/test_g925x_engine.cpp")
 assert validate.changed_file_is_launcher_only("tools/fixtures/g925/G925ProfileReportTest.java")
 assert not validate.changed_file_is_launcher_only("tools/fixtures/g925/engine.cpp")
 assert not validate.changed_file_is_launcher_only(
@@ -92,6 +95,14 @@ with patch.object(validate, "github_api", side_effect=fake_api):
     }]}):
         assert validate.validate(12345, "ali00978/ZMOD-Liberty", head_sha,
                                  "mali", "armv9", "test") == artifacts["artifacts"][0]
+    for incomplete_files in (None, []):
+        with patch.dict(allowed, {"files": incomplete_files}):
+            try:
+                validate.validate(12345, "ali00978/ZMOD-Liberty", head_sha,
+                                  "mali", "armv9", "test")
+                raise AssertionError("Incomplete comparison was incorrectly allowed")
+            except validate.UnsafeFastBuild:
+                pass
     with patch.dict(run, {"conclusion": "failure"}):
         try:
             validate.validate(12345, "ali00978/ZMOD-Liberty", head_sha,
@@ -113,7 +124,12 @@ with patch.object(validate, "github_api") as api, patch.object(validate, "valida
     assert "feature%2Fv27" in api.call_args.args[0]
     guard.reset_mock()
     api.reset_mock()
-    for args in ({"event": "push"}, {"gpu": "adreno"}, {"cpu": "compatible"},
+    assert select(event="push") == ("java-only", "12345")
+    guard.assert_called_once_with(12345, "ali00978/ZMOD-Liberty", head_sha,
+                                  "mali", "armv9", "test")
+    guard.reset_mock()
+    api.reset_mock()
+    for args in ({"event": "schedule"}, {"gpu": "adreno"}, {"cpu": "compatible"},
                  {"event": "workflow_dispatch"}):
         assert select(**args) == ("full", "")
     assert select(event="workflow_dispatch", mode="java-only", base="23456") == ("java-only", "23456")
@@ -126,6 +142,7 @@ with patch.object(validate, "github_api") as api, patch.object(validate, "valida
         pass
     guard.side_effect = validate.UnsafeFastBuild("Native changes or expired artifact")
     assert select() == ("full", "")
+    assert select(event="push") == ("full", "")
     guard.reset_mock()
     api.return_value = {"workflow_runs": [{"id": 12345, "head_branch": "different-branch"}]}
     assert select() == ("full", "")

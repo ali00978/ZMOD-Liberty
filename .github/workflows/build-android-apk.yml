@@ -6,7 +6,7 @@ name: Android APK
 #
 # Full builds still compile the whole engine when native sources change.
 # Java-only mode reuses verified native libraries from a previous successful APK
-# of THIS repository. PR updates select it automatically only after the source
+# of THIS repository. Push and PR updates select it automatically only after the source
 # compatibility guard passes; manual builds can still request full compilation.
 
 on:
@@ -437,8 +437,13 @@ jobs:
         if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
         run: python tools/test_g925_native_app_v1.py
 
+      - name: Select host C++ toolchain for FSR extent regression
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Test G925 X hardware targeting and off-device Java regressions
         if: ${{ env.LIBERTY_GPU == 'mali' && env.LIBERTY_CPU == 'armv9' }}
+        env:
+          G925_TEST_CXX: clang++
         run: python tools/test_g925x_lab.py
 
       - name: Install Android SDK packaging dependencies
