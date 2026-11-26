@@ -42,7 +42,7 @@ for prohibited in (
 assert 'button("RESTORE PREVIOUS GRAPHICS BACKUP", false)' in launcher
 assert "restoreG925GraphicsBackup()" in launcher
 restore = launcher[launcher.index("private void restoreG925GraphicsBackup()"):
-                   launcher.index("// Graphics settings: one dropdown")]
+                   launcher.index("private void restoreG925FullGraphics()")]
 assert '"graphics-before-g925-40fps.txt"' in restore
 assert '"graphics-before-g925-maxfps.txt"' in restore
 assert '"graphics-before-quality-restore.txt"' in restore
@@ -78,7 +78,7 @@ for key, value in required.items():
 # The separate user-triggered fidelity repair restores the source-quality
 # draw distance and reflection refresh without overriding unrelated choices.
 visual = launcher[launcher.index("private void restoreG925FullGraphics()"):
-                  launcher.index("// Graphics settings: one dropdown")]
+                  launcher.index("private void applyG925XSpatialUpscaling(")]
 visualSelected = dict(re.findall(r'\{"([^"]+)", "([^"]+)"\}', visual))
 assert visualSelected == {
     "gta4_dynamic_draw_distance": "false",
