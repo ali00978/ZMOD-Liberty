@@ -1,0 +1,7 @@
+# G925 X v0.8: opt-in mobile spatial upscaling
+
+The renderer already contains FSR1 spatial shaders and an extent policy. This change exposes two explicit launcher presets for the independent G925 X package only. At 16:9, 900p output with Quality selects 1067x600 internal render extent; Balanced selects 941x529. Relative to 1600x900 these are approximately 44% and 35% of scene pixels; they are not predicted FPS gains. The output cap and the actual game's aspect ratio determine effective dimensions. Existing minimum render size, supersampling and HDR restrictions still apply. No driver modification, synthetic frames, automatic resolution switching or forced FPS change is included.
+
+The preset merges only output height, upscaler and FSR1 quality into graphics.txt and backs up the original file if present. Existing frame cap, draw distance, shadows, reflections, and advanced custom arguments remain unchanged in that file. Other launch-time overrides may still take precedence. Restore native rendering using the existing Resolution and Upscaler controls; the original file is also backed up. Compare native vs Quality vs Balanced at the same FPS cap and in the same scene, recording CPU/GPU timing, actual rendered FPS, and thermal behavior. CPU-bound scenes may not improve. Frame generation needs separate device feature, UI composition, motion/history, pacing and latency validation before activation.
+
+CI verifies launcher wiring and compiles the actual spatial extent policy; no host test can certify real Mali GPU FPS or visual quality.

@@ -1076,6 +1076,76 @@ public class LauncherActivity extends Activity {
         toast("Console draw distance and reflection cadence restored. Restart GTA IV.");
     }
 
+    /**
+     * Opt-in mobile spatial upscaling; this does not generate synthetic frames.
+     * Keep the user's frame limit and every other visual/scheduling setting.
+     * Use the normal native FSR1 path, not an Android driver injection.
+     */
+    private void applyG925XSpatialUpscaling(String quality) {
+        if (!BuildConfig.G925_X_EDITION) return;
+        if (!quality.equals("quality") && !quality.equals("balanced")) return;
+        if (mSettingsDirty) {
+            toast("Save other changes first, then apply FSR");
+            return;
+        }
+        final String[][] selected = {
+                {"gta4_output_height_cap", "900"},
+                {"gta4_native_upscaler", "fsr1"},
+                {"gta4_fsr1_quality", quality}
+        };
+        int[] indices = new int[selected.length];
+        int[] choices = new int[selected.length];
+        for (int entry = 0; entry < selected.length; ++entry) {
+            int index = -1;
+            int choice = -1;
+            for (int i = 0; i < GRAPHICS_SETTINGS.length; ++i) {
+                GraphicsSetting setting = GRAPHICS_SETTINGS[i];
+                if (!setting.cvars[0].equals(selected[entry][0])) continue;
+                if (mGraphicsSpinners[i] == null) break;
+                for (int j = 0; j < setting.values.length; ++j) {
+                    if (setting.values[j].equals(selected[entry][1])) {
+                        index = i;
+                        choice = j + 1;
+                        break;
+                    }
+                }
+                break;
+            }
+            if (index < 0 || choice < 0) {
+                toast("FSR preset unavailable; nothing changed");
+                return;
+            }
+            indices[entry] = index;
+            choices[entry] = choice;
+        }
+        File graphics = new File(mDataRoot, LibertyActivity.GRAPHICS_FILE);
+        File backup = new File(mDataRoot, "graphics-before-g925x-fsr.txt");
+        try {
+            java.util.List<String> original = graphics.isFile()
+                    ? Files.readAllLines(graphics.toPath(), StandardCharsets.UTF_8)
+                    : java.util.Collections.emptyList();
+            String merged = G925FullQualityCvarMerge.merge(original, selected);
+            if (graphics.isFile() && !backup.exists())
+                Files.copy(graphics.toPath(), backup.toPath());
+            writeCleanConfig(graphics, merged.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            Log.w(TAG, "Could not save G925 X FSR preset", e);
+            toast("FSR preset not saved");
+            return;
+        }
+        mGraphicsLoading = true;
+        try {
+            for (int entry = 0; entry < selected.length; ++entry) {
+                mGraphicsPositions[indices[entry]] = choices[entry];
+                mGraphicsSpinners[indices[entry]].setSelection(choices[entry], false);
+            }
+        } finally {
+            mGraphicsLoading = false;
+        }
+        updateSaveStatus();
+        toast("FSR " + quality + " saved; existing FPS limit kept. Restart GTA IV.");
+    }
+
     // Graphics settings: one dropdown per setting, saved to graphics.txt, which
     // LibertyActivity appends after args.txt. "Default" writes nothing, so the
     // value from args.txt applies.
@@ -1349,6 +1419,22 @@ public class LauncherActivity extends Activity {
             card.addView(text("Only needed if you previously used a reduced-quality "
                     + "G925 preset; restores your original graphics.txt when a backup exists.",
                     12, R.color.picker_muted), matchWrap(dp(8)));
+        }
+        if (BuildConfig.G925_X_EDITION) {
+            card.addView(heading("G925 X / FSR UPSCALING", 17), matchWrap(dp(8)));
+            card.addView(text("Spatial FSR1 reconstructs a 900p image from fewer scene pixels. "
+                    + "Keeps your existing frame limit, shadows, textures and draw distance. "
+                    + "Quality changes render resolution only; FPS gains depend on GPU load. "
+                    + "This is not frame generation. Use the Resolution and Upscaler menus to turn it off.",
+                    12, R.color.picker_muted), matchWrap(dp(8)));
+            Button fsrQuality = button("FSR QUALITY / 900P OUTPUT", true);
+            fsrQuality.setOnClickListener(v -> applyG925XSpatialUpscaling("quality"));
+            card.addView(fsrQuality, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+            Button fsrBalanced = button("FSR BALANCED / 900P OUTPUT", false);
+            fsrBalanced.setOnClickListener(v -> applyG925XSpatialUpscaling("balanced"));
+            card.addView(fsrBalanced, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
         }
         Button official60 = button("ORIGINAL GRAPHICS / 60 FPS CAP", false);
         official60.setOnClickListener(v -> {

@@ -19,16 +19,28 @@ for needle in (
     '"com.zmodliberty.g925x"',
     '"ZMOD G925 X Lab"',
     'versionCode   = 72',
-    'if (g925XEdition) versionCode = 77',
+    'if (g925XEdition) versionCode = 78',
     'buildConfigField("boolean", "G925_X_EDITION", g925XEdition.toString())',
 ):
     assert needle in gradle, needle
 assert 'G925XDeviceProfile.describe(' in launcher
+# Explicit opt-in: only the three intended cvars, no thermal/FPS cap override.
+preset = launcher.split("private void applyG925XSpatialUpscaling(String quality) {", 1)[1].split("// Graphics settings:", 1)[0]
+assert 'if (!BuildConfig.G925_X_EDITION) return;' in preset
+assert 'if (mSettingsDirty)' in preset
+assert '{"gta4_output_height_cap", "900"}' in preset
+assert '{"gta4_native_upscaler", "fsr1"}' in preset
+assert '{"gta4_fsr1_quality", quality}' in preset
+assert preset.count('{"gta4_') == 3
+assert 'G925FullQualityCvarMerge.merge(original, selected)' in preset
+assert 'graphics-before-g925x-fsr.txt' in preset
+assert 'applyG925XSpatialUpscaling("quality")' in launcher
+assert 'applyG925XSpatialUpscaling("balanced")' in launcher
 assert 'G925NativeDefaults.apply(arguments, BuildConfig.G925_X_EDITION)' in activity
 assert workflow.count("Package independent G925 X APK") == 2, "Both CI paths must package X"
 assert workflow.count("Upload independent G925 X APK") == 2, "Both CI paths must publish X"
 assert workflow.count("LIBERTY_EDITION=g925x bash") == 2
-assert 'ZMOD-G925-X-Lab-v0.7.0-armv9.apk' in workflow
+assert 'ZMOD-G925-X-Lab-v0.8.0-armv9.apk' in workflow
 push_block = workflow.split("  pull_request:", 1)[0]
 push_branches = next(line.split("[", 1)[1].split("]", 1)[0].split(",")
                      for line in push_block.splitlines()
@@ -55,4 +67,24 @@ if os.getenv("G925X_BENCHMARK") == "1":
                         str(ROOT / "tools/bench_g925x_rebased_index.cpp"),
                         "-o", str(executable)], check=True, timeout=60)
         subprocess.run([str(executable)], check=True, timeout=60)
-print("PASS: G925 X separate identity, safe target detection, native benchmark wiring")
+# Verify the actual renderer's existing spatial extent policy off-device.
+cxx = os.getenv("G925_TEST_CXX") or shutil.which("clang++") or shutil.which("g++")
+assert cxx, "C++ compiler required for FSR policy test"
+with tempfile.TemporaryDirectory(prefix="g925x-fsr-") as tmp:
+    source = Path(tmp) / "policy.cpp"
+    source.write_text(r"""
+#include "rex/graphics/gta4_native/upscaling_policy.h"
+using namespace rex::graphics::gta4_native;
+constexpr auto q = SelectFsr1RenderExtent(1600, 900, true, "quality", false, false, false);
+constexpr auto b = SelectFsr1RenderExtent(1600, 900, true, "balanced", false, false, false);
+static_assert(q.active() && q.width == 1067 && q.height == 600);
+static_assert(b.active() && b.width == 941 && b.height == 529);
+static_assert(!SelectFsr1RenderExtent(640, 360, true, "balanced", false, false, false).active());
+static_assert(!SelectFsr1RenderExtent(1600, 900, false, "quality", false, false, false).active());
+static_assert(!SelectFsr1RenderExtent(1600, 900, true, "quality", true, false, false).active());
+int main() {}
+""")
+    subprocess.run([cxx, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-I",
+                    str(ROOT / "glue/rexglue-sdk-main/include"), str(source),
+                    "-o", str(Path(tmp) / "policy")], check=True, timeout=60)
+print("PASS: G925 X identity, native policy, opt-in FSR and spatial extent checks")
