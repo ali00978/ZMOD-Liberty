@@ -1180,7 +1180,7 @@ public class LauncherActivity extends Activity {
                     new String[] {"gta4_fsr1_quality"},
                     new String[] {"Default", "Ultra quality", "Quality", "Balanced", "Performance"},
                     new String[] {"ultra_quality", "quality", "balanced", "performance"}),
-            new GraphicsSetting("Mobile Frame Generation", "Experimental: 30/40/60 cap; up to 60 output FPS; restart",
+            new GraphicsSetting("Mobile Frame Generation", "Default off for stability; experimental 30/40/60 cap; restart",
                     new String[] {"gta4_mobile_frame_generation"},
                     new String[] {"Default", "Off", "On (experimental)"},
                     new String[] {"false", "true"}),
@@ -1428,6 +1428,15 @@ public class LauncherActivity extends Activity {
                     12, R.color.picker_muted), matchWrap(dp(8)));
         }
         if (BuildConfig.G925_X_EDITION) {
+            card.addView(heading("G925 X / STABILITY", 17), matchWrap(dp(8)));
+            Button stable = button("STABLE GAMEPLAY / CPU FIRST", true);
+            stable.setOnClickListener(v -> applyG925XStableProfile());
+            card.addView(stable, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+            card.addView(text("30 FPS cap, FG off, one extra frame, 60% distance, 40% population, "
+                    + "720p FSR Quality. Lower scene detail to reduce CPU draw work. "
+                    + "Saves a backup; restart GTA IV and compare without profiling.",
+                    12, R.color.picker_muted), matchWrap(dp(8)));
             card.addView(heading("G925 X / FSR UPSCALING", 17), matchWrap(dp(8)));
             card.addView(text("Spatial FSR1 reconstructs a 720p or 900p image from fewer scene pixels. "
                     + "Keeps your existing frame limit, shadows, textures and draw distance. "
@@ -1509,6 +1518,69 @@ public class LauncherActivity extends Activity {
             default:
                 return 0;
         }
+    }
+
+    private void applyG925XStableProfile() {
+        if (!BuildConfig.G925_X_EDITION) return;
+        if (mSettingsDirty) {
+            toast("Save other changes before applying the stability profile");
+            return;
+        }
+        final String[][] selected = G925XStableProfile.overrides();
+        int[] positions = new int[GRAPHICS_SETTINGS.length];
+        int matched = 0;
+        // A density choice writes four cvars; validate each one before saving.
+        for (int i = 0; i < GRAPHICS_SETTINGS.length; ++i) {
+            GraphicsSetting setting = GRAPHICS_SETTINGS[i];
+            String value = null;
+            int groupMatches = 0;
+            for (String key : setting.cvars) {
+                for (String[] entry : selected) {
+                    if (!key.equals(entry[0])) continue;
+                    if (value != null && !value.equals(entry[1])) {
+                        toast("Stability profile inconsistent; nothing saved"); return;
+                    }
+                    value = entry[1]; ++groupMatches;
+                }
+            }
+            if (groupMatches == 0) continue;
+            if (groupMatches != setting.cvars.length || mGraphicsSpinners[i] == null) {
+                toast("Stability profile unavailable; nothing saved"); return;
+            }
+            for (int k = 0; k < setting.values.length; ++k)
+                if (setting.values[k].equals(value)) positions[i] = k + 1;
+            if (positions[i] == 0) {
+                toast("Stability profile unavailable; nothing saved"); return;
+            }
+            matched += groupMatches;
+        }
+        if (matched != selected.length) {
+            toast("Stability profile unavailable; nothing saved"); return;
+        }
+        File graphics = new File(mDataRoot, LibertyActivity.GRAPHICS_FILE);
+        File backup = new File(mDataRoot, "graphics-before-g925x-stability.txt");
+        try {
+            java.util.List<String> original = graphics.isFile()
+                    ? Files.readAllLines(graphics.toPath(), StandardCharsets.UTF_8)
+                    : java.util.Collections.emptyList();
+            String merged = G925FullQualityCvarMerge.merge(original, selected);
+            if (graphics.isFile() && !backup.exists())
+                Files.copy(graphics.toPath(), backup.toPath());
+            writeCleanConfig(graphics, merged.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException ex) {
+            Log.w(TAG, "Stability profile not saved", ex);
+            toast("Stability profile not saved"); return;
+        }
+        mGraphicsLoading = true;
+        try {
+            for (int i = 0; i < positions.length; ++i) {
+                if (positions[i] == 0) continue;
+                mGraphicsPositions[i] = positions[i];
+                mGraphicsSpinners[i].setSelection(positions[i], false);
+            }
+        } finally { mGraphicsLoading = false; }
+        updateSaveStatus();
+        toast("CPU-first stability profile saved. Restart GTA IV; test normal Play.");
     }
 
     /**

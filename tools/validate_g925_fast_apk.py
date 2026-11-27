@@ -58,6 +58,8 @@ def changed_file_is_launcher_only(path: str) -> bool:
         "os/android/scripts/build_apk.sh",
         "tools/fixtures/g925/G925ProfileReportTest.java",
         "tools/fixtures/g925/G925NativeDefaultsTest.java",
+        "tools/fixtures/g925/G925XNativeDefaultsTest.java",
+        "tools/fixtures/g925/G925XStableProfileTest.java",
     }
     if path in safe_exact or any(path.startswith(p) for p in safe_app_paths):
         return True

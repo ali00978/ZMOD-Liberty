@@ -13,12 +13,12 @@ final class G925XNativeDefaults {
 
     static void apply(List<String> args, boolean g925x) {
         if (!g925x) return;
-        addUnlessConfigured(args, "gta4_native_g925x_adaptive_sparse");
-        // Default on only in G925 X. Native eligibility checks may fall back.
-        addUnlessConfigured(args, "gta4_mobile_frame_generation");
+        addUnlessConfigured(args, "gta4_native_g925x_adaptive_sparse", true);
+        // Prefer stable real frames. An explicitly enabled FG setting survives.
+        addUnlessConfigured(args, "gta4_mobile_frame_generation", false);
     }
 
-    private static void addUnlessConfigured(List<String> args, String name) {
+    private static void addUnlessConfigured(List<String> args, String name, boolean enabled) {
         final String positive = "--" + name;
         final String negative = "--no-" + name;
         for (String argument : args) {
@@ -26,6 +26,6 @@ final class G925XNativeDefaults {
                     || argument.equals(negative) || argument.startsWith(negative + "="))
                 return;
         }
-        args.add(positive + "=true");
+        args.add(positive + "=" + enabled);
     }
 }
